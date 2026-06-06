@@ -2,7 +2,7 @@
 
 基于 [xiaozhi-esp32](https://github.com/78/xiaozhi-esp32) 的 M5Stack Core S3 Stack-chan 增强固件。在原版语音交互基础上增加了触摸、体感、情绪灯、舵机等交互能力，侧重**陪伴感**体验。
 
-> 搓了五天，来回烧录测试了小几百次。分享版抹掉了个性化设置（人设、文案池等），大家实际使用时自定义内容依然很多。不至于像我一样花五天，但建议预留至少半天加载个性化信息并测试。
+> 基于 [mo-hantang/Stackchan-HtSz](https://github.com/mo-hantang/Stackchan-HtSz) 项目修改
 
 ## 更新日志
 
@@ -146,3 +146,4 @@ CONFIG_OTA_URL="http://你的服务器IP:8003/xiaozhi/ota/"
 ## License
 
 同上游 [xiaozhi-esp32](https://github.com/78/xiaozhi-esp32)。
+
