@@ -6,6 +6,12 @@
 
 ## 更新日志
 
+### 2026-06-10
+- **触摸文本修复**：SI12T 头顶触摸把长动作文本拆成两部分——屏幕显示完整动作描述（带括号），LLM 只收 ≤7 字的短动作标签（如"主人蹭了蹭额头"）。修复服务端 `"detect 仅用于唤醒词，请不要传长文本"` 报错
+- **SendUserText 防御性长度检查**：超长文本（>24 字节）直接丢弃并打 ERROR 日志，避免静默失败
+- **CMakeLists 加硬件平台硬约束**：target 不是 esp32s3 或 board type 不是 M5STACK_CORE_S3 时直接 FATAL_ERROR 给出修复命令，避免烧录阶段才报 "This chip is ESP32-S3, not ESP32" 错位错误
+- **一键脚本**：`scripts/flash.sh` / `scripts/flash.bat` 自动检测并执行 `idf.py set-target esp32s3`，克隆后无需手动指定 target 即可编译烧录
+
 ### 2026-06-06
 - **唤醒词灵敏度重构**：`CONFIG_CUSTOM_WAKE_WORD_THRESHOLD` 改为 `CONFIG_WAKE_WORD_SENSITIVITY` Low/Medium/High 三档，AFE/ESP/自定义三种唤醒方式统一采用
 - **文本打断优化**：`SendUserText` 在 Speaking 状态下打断说话并重新唤醒，Listening 状态下关闭音频通道后重新唤醒
@@ -79,36 +85,95 @@
 ④ 小智有摄像头调用能力，端口裸奔等于把摄像头开放给任何人
 ⑤ 公网端口扫描是常态，部署完记得 ss -tlnp 检查一下自己开了哪些端口。安全无小事。
 
-## 编译
+## 编译烧录
 
-需要 [ESP-IDF v5.5.x](https://github.com/espressif/esp-idf)。
+需要 [ESP-IDF v5.5.x](https://github.com/espressif/esp-idf)。整个流程只用 `idf.py` 几条命令，按顺序复制粘贴即可。
 
-```bash
-# 克隆
+### 0. 准备环境（每个新终端都要做一次）
+
+打开开始菜单里的 **"ESP-IDF 5.5 CMD"**（或 PowerShell 版本），看到类似 `Setting IDF_PATH to ...` 的输出说明环境已加载。然后：
+
+```bat
+cd C:\StackChan\Stackchan-XiaoZhi
+```
+
+> 不要用普通 cmd——`idf.py` 不在 PATH，会报 "idf.py 不是内部或外部命令"。
+
+### 1. 克隆项目（一次性）
+
+```bat
 git clone https://github.com/mo-hantang/Stackchan-HtSz.git
 cd Stackchan-HtSz
-
-# 编译（低配机器用 -j1 避免内存不足）
-idf.py build -- -j1
 ```
 
-## 烧录
+### 2. 首次编译烧录（**每个新克隆只跑这一次**）
 
-```bash
-# 全量烧录（首次或 OTA 出问题时使用）
+```bat
+:: 指定 target（M5Stack Core S3 = esp32s3）
+:: 跑完这一步会在项目根生成 sdkconfig，写入正确的 esp32s3 配置
+idf.py set-target esp32s3
+
+:: target 切换后必须清缓存，否则不同 ABI 的中间产物会混用
+idf.py fullclean
+
+:: 编译 + 烧录（build 后面所有示例都假设你已经跑过上面两步）
+idf.py build flash
+```
+
+> **为什么必须 `fullclean`？** ESP-IDF 不同 target 的启动文件、链接脚本、PSRAM 配置都不同，混用会引发奇怪的链接错误或运行时崩溃。改 target = 切工具链 = 必须 clean。
+
+> **低配机器防 OOM**：在 build 命令后加 `-- -j1`（强制单核编译）：
+> ```bat
+> idf.py build flash -- -j1
+> ```
+
+### 3. 后续增量编译烧录
+
+之后每次改完代码：
+
+```bat
+:: 编译 + 烧录
+idf.py build flash
+
+:: 或分两步
+idf.py build
 idf.py flash
-
-# 或手动指定：
-python -m esptool --chip esp32s3 -b 460800 \
-  --before default_reset --after hard_reset \
-  write_flash --flash_mode dio --flash_size 16MB --flash_freq 80m \
-  0x0 build/bootloader/bootloader.bin \
-  0x8000 build/partition_table/partition-table.bin \
-  0xd000 build/ota_data_initial.bin \
-  0x410000 build/xiaozhi.bin
 ```
 
-> **注意**：如果之前用过 OTA 升级，务必同时刷入 `ota_data_initial.bin`（地址 0xd000），否则设备可能从旧分区启动。
+### 4. 手动 esptool 烧录（`idf.py flash` 出问题时用）
+
+```bat
+:: 注意：地址 0xd000 的 ota_data_initial.bin 必须刷，否则可能从旧分区启动
+python -m esptool --chip esp32s3 -p COM4 -b 460800 ^
+  --before default_reset --after hard_reset ^
+  write_flash --flash_mode dio --flash_size 16MB --flash_freq 80m ^
+  0x0       build\bootloader\bootloader.bin ^
+  0x8000    build\partition_table\partition-table.bin ^
+  0xd000    build\ota_data_initial.bin ^
+  0x410000  build\xiaozhi.bin
+```
+
+`-p COM4` 改成你实际的串口号（设备管理器里看）。如果用 OTA 升级过、老是起不来，**`0xd000` 那一行**别漏。
+
+### 5. 串口监视（调试用）
+
+```bat
+:: 编译烧录完直接看日志
+idf.py -p COM4 monitor
+
+:: 退出监视器按 Ctrl+]
+```
+
+### 常见错误对照
+
+| 错误 | 原因 | 解决 |
+|---|---|---|
+| `idf.py 不是内部或外部命令` | 没在 ESP-IDF CMD 里 | 开始菜单打开"ESP-IDF 5.5 CMD" |
+| `A fatal error occurred: This chip is ESP32-S3, not ESP32` | sdkconfig 里 target 错配 | 跑 `idf.py set-target esp32s3 && idf.py fullclean` |
+| `Linker script ... not found` | 切 target 后没清缓存 | 跑 `idf.py fullclean` |
+| 编译到一半 OOM 死机 | 机器内存不够 | 跑 `idf.py build -- -j1` |
+| 烧录后设备起不来 / 从旧版本启动 | 漏刷 `ota_data_initial.bin` | 补刷 `0xd000 build\ota_data_initial.bin` |
+| 烧录时串口被占用 | 监视器没关 / 其他软件占用 | 关掉监视器和其他串口软件 |
 
 ## 配置
 

@@ -1687,18 +1687,24 @@ private:
                 uint8_t cur = (out >> (zone * 2)) & 0x03;
                 uint8_t prev = (si12t_last_state_ >> (zone * 2)) & 0x03;
                 if (cur != 0 && prev == 0 && (now - last_touch_time > TOUCH_COOLDOWN_US)) {
-                    static const char* msgs[] = {
-                        "（主人摸了摸小智的头）",
-                        "（主人揉了揉小智的头顶）",
-                        "（主人轻轻拍了拍小智的脑袋）",
-                        "（主人用额头抵着小智的额头蹭了蹭）",
-                        "（主人用手指戳了戳小智的脑门）",
-                        "（主人温柔地抚摸小智的头发）",
-                        "（主人理了理小智的头发）",
+                    // display = 屏幕展示的完整动作描写（带括号，作为场景旁白）
+                    // tag    = 发给 LLM 的短动作标签（≤6 字），避开 detect.text 长度限制
+                    struct TouchMsg { const char* display; const char* tag; };
+                    static const TouchMsg msgs[] = {
+                        {"（主人摸了摸小智的头）",         "主人摸了摸头"},
+                        {"（主人揉了揉小智的头顶）",       "主人揉了揉头"},
+                        {"（主人轻轻拍了拍小智的脑袋）",   "主人拍了拍头"},
+                        {"（主人用额头抵着小智的额头蹭了蹭）", "主人蹭了蹭额头"},
+                        {"（主人用手指戳了戳小智的脑门）", "主人戳了戳脑门"},
+                        {"（主人温柔地抚摸小智的头发）",   "主人抚摸头发"},
+                        {"（主人理了理小智的头发）",       "主人理了理头发"},
                     };
-                    const char* msg = msgs[esp_random() % 7];
-                    ESP_LOGI(TAG, "SI12T touch -> %s", msg);
-                    SendUserMessage(msg);
+                    const auto& m = msgs[esp_random() % 7];
+                    ESP_LOGI(TAG, "SI12T touch -> %s | tag=%s", m.display, m.tag);
+                    if (auto* disp = GetDisplay()) {
+                        disp->SetChatMessage("user", m.display);
+                    }
+                    SendUserMessage(m.tag);
                     last_touch_time = now;
                     break;
                 }

@@ -1023,6 +1023,15 @@ bool Application::UpgradeFirmware(const std::string& url, const std::string& ver
 
 void Application::SendUserText(const std::string& text) {
     if (!protocol_) return;
+    // detect.text 是唤醒词通道，服务端有长度限制（中文 3 字节/字，唤醒词 ~"你好小智" 12 字节）。
+    // 超长文本会被服务端以 "detect 仅用于唤醒词" 拒绝，这里前置拦截并打 ERROR 日志。
+    // 上限设为 24 字节（≈ 8 个汉字），覆盖触摸动作标签如 "主人蹭了蹭额头"。
+    constexpr size_t kMaxDetectTextBytes = 24;
+    if (text.size() > kMaxDetectTextBytes) {
+        ESP_LOGE(TAG, "SendUserText: text too long (%zu > %zu), dropped: %.*s",
+                 text.size(), kMaxDetectTextBytes, (int)text.size(), text.c_str());
+        return;
+    }
     auto state = GetDeviceState();
     if (state == kDeviceStateIdle) {
         // 待机时走标准唤醒路径建立 channel
