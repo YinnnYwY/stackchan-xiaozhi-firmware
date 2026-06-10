@@ -7,12 +7,17 @@
 ## 更新日志
 
 ### 2026-06-10
+
+- **编译修复**：恢复 `ota_` 成员变量、`UpgradeFirmware` 方法、`kDeviceStateUpgrading` 状态（codex-refactor 分支重构遗漏导致编译失败）
+- **版本检查重试优化**：`CheckNewVersion()` 中 `MAX_RETRY` 从 10 降为 1，服务端不可达时不再反复重试卡在激活阶段
+- **默认协议改为 WebSocket**：`InitializeProtocol()` 无 OTA 配置时默认 WebSocket 替代 MQTT，避免 MQTT 阻塞 10 秒导致唤醒词响应延迟
 - **触摸文本修复**：SI12T 头顶触摸把长动作文本拆成两部分——屏幕显示完整动作描述（带括号），LLM 只收 ≤7 字的短动作标签（如"主人蹭了蹭额头"）。修复服务端 `"detect 仅用于唤醒词，请不要传长文本"` 报错
-- **SendUserText 防御性长度检查**：超长文本（>24 字节）直接丢弃并打 ERROR 日志，避免静默失败
-- **CMakeLists 加硬件平台硬约束**：target 不是 esp32s3 或 board type 不是 M5STACK_CORE_S3 时直接 FATAL_ERROR 给出修复命令，避免烧录阶段才报 "This chip is ESP32-S3, not ESP32" 错位错误
-- **一键脚本**：`scripts/flash.sh` / `scripts/flash.bat` 自动检测并执行 `idf.py set-target esp32s3`，克隆后无需手动指定 target 即可编译烧录
+- **SendUserText 防御性长度检查**：超长文本（>24 字节）直接丢弃，使用安全 `%lu` 格式化（避免 `%zu` 在 nano printf 下输出 "zu" 字面量）
+- **屏蔽 OTA 远程版本升级**：`main/ota.cc` 里 `Ota::CheckVersion` 解析完固件版本后强制 `has_new_version_ = false`，服务器**永远不会触发自动升级**。其他副作用（系统时间同步、`websocket.token` 注入、激活挑战）原样保留，**不**改其他流程。升级请重 `idf.py build flash`
+- 其他小修：体感池拆 `display+tag`（修 panic）、删早安问候+天气任务、删 `self.upgrade_firmware` MCP 工具
 
 ### 2026-06-06
+
 - **唤醒词灵敏度重构**：`CONFIG_CUSTOM_WAKE_WORD_THRESHOLD` 改为 `CONFIG_WAKE_WORD_SENSITIVITY` Low/Medium/High 三档，AFE/ESP/自定义三种唤醒方式统一采用
 - **文本打断优化**：`SendUserText` 在 Speaking 状态下打断说话并重新唤醒，Listening 状态下关闭音频通道后重新唤醒
 - **M5Stack Core S3 休眠背光**：进入休眠时背光亮度改为 0，彻底熄灭
@@ -50,10 +55,6 @@
 ### 文本打断
 - LLM/用户输入文本消息可在 Speaking/Listening 状态下打断当前对话并重新唤醒
 - 避免对话中发文本被静默丢弃
-
-### 早安问候 (定时任务)
-- 工作日早上定时问候 + 天气查询
-- SNTP 延迟启动（避免 tcpip panic）
 
 ### 自定义唤醒词
 - Multinet6 自定义唤醒词支持
@@ -185,7 +186,6 @@ CONFIG_USE_CUSTOM_WAKE_WORD=y
 CONFIG_CUSTOM_WAKE_WORD="ni hao xiao zhi"
 CONFIG_CUSTOM_WAKE_WORD_DISPLAY="你好小智"
 CONFIG_WAKE_WORD_SENSITIVITY_MEDIUM=y
-CONFIG_OTA_URL="http://你的服务器IP:8003/xiaozhi/ota/"
 ```
 
 ## 服务端
