@@ -75,20 +75,9 @@ idf.py build flash
 
 ## 更新日志
 
-### 2026-06-11
-- 修复休眠机制：恢复空闲检查，对话中不再误休眠；超时 60s → 30s
-- Idle 长按屏幕 5 秒进入配网模式
-- 说话时屏蔽 BMI270 体感，避免舵机晃动误触 IMU
-
-### 2026-06-10
-- 编译修复 + 版本检查重试优化（MAX_RETRY=1）+ 默认 WebSocket 协议
-- 触摸/SendUserText 长文本拦截修复（≤24 字节）
-- 屏蔽 OTA 远程升级，仅支持 `idf.py flash` 手动升级
-- 体感池拆 display+tag、删早安问候、删 upgrade_firmware MCP 工具
-
-### 2026-06-06
-- 唤醒词灵敏度 Low/Medium/High 三档
-- 文本打断优化 + 休眠背光彻底熄灭 + SPIRAM 改回 QUAD
+- 2026-06-11：修复休眠机制（恢复空闲检查，对话中不再误休眠，超时 60s → 30s）；Idle 长按屏幕 5 秒进入配网模式；说话时屏蔽 BMI270 体感避免舵机晃动误触 IMU
+- 2026-06-10：编译修复 + 版本检查重试优化（MAX_RETRY=1）+ 默认 WebSocket 协议；触摸/SendUserText 长文本拦截修复（≤24 字节）；屏蔽 OTA 远程升级；体感池拆 display+tag、删早安问候、删 upgrade_firmware MCP 工具
+- 2026-06-06：唤醒词灵敏度 Low/Medium/High 三档；文本打断优化；休眠背光彻底熄灭；SPIRAM 改回 QUAD
 
 ## 自定义
 
