@@ -94,7 +94,29 @@
 
 ## 编译烧录
 
-需要 [ESP-IDF v5.5.x](https://github.com/espressif/esp-idf)。整个流程只用 `idf.py` 几条命令，按顺序复制粘贴即可。
+### 方式一：直接烧录 Release 固件（无需安装 ESP-IDF）
+
+从 [Releases](https://github.com/howecheung/Stackchan-XiaoZhi/releases) 下载最新版本 `xiaozhi.bin` 及配套文件，用 esptool 烧录：
+
+```bash
+# 1. 安装 esptool（一次性）
+pip install esptool
+
+# 2. 下载 Release 中的 4 个文件到同一目录，进入该目录后：
+esptool.py --chip esp32s3 -p COM4 -b 460800 \
+  --before default_reset --after hard_reset \
+  write_flash --flash_mode dio --flash_size 16MB --flash_freq 80m \
+  0x0       bootloader.bin \
+  0x8000    partition-table.bin \
+  0xd000    ota_data_initial.bin \
+  0x410000  xiaozhi.bin
+```
+
+> 把 `COM4` 换成你的实际串口号。首次烧录后建议用 `esptool.py --chip esp32s3 -p COM4 erase_flash` 清空 NVS 再重烧，避免旧配置残留。
+
+### 方式二：源码编译（需要 ESP-IDF v5.5.x）
+
+整个流程只用 `idf.py` 几条命令，按顺序复制粘贴即可。
 
 ### 0. 准备环境（每个新终端都要做一次）
 
@@ -109,8 +131,8 @@ cd C:\StackChan\Stackchan-XiaoZhi
 ### 1. 克隆项目（一次性）
 
 ```bat
-git clone https://github.com/mo-hantang/Stackchan-HtSz.git
-cd Stackchan-HtSz
+git clone https://github.com/howecheung/Stackchan-XiaoZhi.git
+cd Stackchan-XiaoZhi
 ```
 
 ### 2. 首次编译烧录（**每个新克隆只跑这一次**）
