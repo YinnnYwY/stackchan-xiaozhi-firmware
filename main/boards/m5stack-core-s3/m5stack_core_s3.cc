@@ -1454,6 +1454,10 @@ private:
             }
 
             still_count = 0;
+
+            // 设备说话时忽略体感（舵机晃动会触发 IMU 误检测）
+            if (Application::GetInstance().GetDeviceState() == kDeviceStateSpeaking) continue;
+
             if (!armed) continue;  // 已触发过，等静止 re-arm
             // 全局冷却：上次触发后 5 分钟内任何情况都不再触发
             if (last_motion_trigger_us_ != 0 && (now - last_motion_trigger_us_) < GLOBAL_COOLDOWN_US) continue;
@@ -1965,6 +1969,15 @@ private:
             touch_total_move += abs(touch_point.x - touch_last_x) + abs(touch_point.y - touch_last_y);
             touch_last_x = touch_point.x;
             touch_last_y = touch_point.y;
+
+            // 空闲状态下长按 5 秒 → 进入配网模式
+            if (!pet_triggered && Application::GetInstance().GetDeviceState() == kDeviceStateIdle) {
+                if (now - touch_start_time >= 5000) {
+                    pet_triggered = true;
+                    EnterWifiConfigMode();
+                    return;
+                }
+            }
 
             // 长按摸头（要手指有移动，不算被物体压）
             if (!pet_triggered) {
