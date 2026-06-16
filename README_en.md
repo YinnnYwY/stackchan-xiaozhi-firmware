@@ -128,6 +128,7 @@ Edit `main/boards/m5stack-core-s3/m5stack_core_s3.cc`:
 - [xiaozhi-esp32](https://github.com/78/xiaozhi-esp32) — Base firmware
 - [xiaozhi-esp32-server](https://github.com/xinnan-tech/xiaozhi-esp32-server) — Server
 - [M5Stack StackChan-BSP](https://github.com/m5stack/StackChan-BSP) — SI12T reference
+- [esp-wifi-connect](https://github.com/78/esp-wifi-connect) — WiFi configuration component
 
 ## 📄 License
 

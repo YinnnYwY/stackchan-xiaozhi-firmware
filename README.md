@@ -128,6 +128,7 @@ idf.py build flash
 - [xiaozhi-esp32](https://github.com/78/xiaozhi-esp32) — 基础固件
 - [xiaozhi-esp32-server](https://github.com/xinnan-tech/xiaozhi-esp32-server) — 服务端
 - [M5Stack StackChan-BSP](https://github.com/m5stack/StackChan-BSP) — SI12T 参考
+- [esp-wifi-connect](https://github.com/78/esp-wifi-connect) — WiFi 配网组件
 
 ## 📄 License
 
