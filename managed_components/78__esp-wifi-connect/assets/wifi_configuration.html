@@ -86,6 +86,13 @@
             font-size: 15px; font-weight: 700; color: var(--text);
             letter-spacing: -0.3px; white-space: nowrap;
         }
+        .app-header .wifi-icon {
+            display: inline-flex; gap: 2px; align-items: flex-end;
+            margin-left: -2px; flex: none;
+        }
+        .app-header .wifi-icon .bar {
+            width: 3px; border-radius: 2px; background: var(--accent);
+        }
 
         /* ========== Theme Toggle ========== */
         .theme-toggle {
@@ -468,6 +475,12 @@
     <header class="app-header">
         <span class="logo" aria-hidden="true">🤖</span>
         <span class="brand-text">StackChan 网络配置</span>
+        <span class="wifi-icon" aria-hidden="true">
+            <span class="bar" style="height:4px"></span>
+            <span class="bar" style="height:7px"></span>
+            <span class="bar" style="height:10px"></span>
+            <span class="bar" style="height:14px"></span>
+        </span>
         <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="切换主题">🔄</button>
         <div class="language-switch">
             <select id="language" onchange="changeLanguage()">
