@@ -127,7 +127,7 @@ node scripts/wifi-preview.js
 <details>
 <summary>展开查看</summary>
 
-- **2026-06-17** · **v0.0.2** 发布
+- **2026-06-16** · **v0.0.2** 发布
 - **2026-06-16** · 配网页面持续美化：🤖 机器人图标 + "StackChan 网络配置"品牌标识 + 日夜主题切换（自动/浅色/深色）+ 信号柱状条分色重绘 + 语言精简为中英文；新增 `self.face.expression` MCP 工具（19 种表情）+ `self.get_system_info` 改为通用工具；配网连接超时 60s → 10s + 连续 3 次失败自动清除失效凭据 + Idle 长按进配网时清空旧 WiFi；本地预览服务器 `node scripts/wifi-preview.js`
 - **2026-06-16** · esp-wifi-connect v3.1.5 → v3.2.1：CSS 变量设计令牌 + 暗色模式 + 渐变背景 + 扫描动画 + 45 种语言；开启 OTA 配置和休眠模式可见性
 - **2026-06-15** · 配网页面（192.168.4.1）美化：iOS 风格分段按钮 + 大圆角卡片 + 信号强度可视化 + StackChan 品牌标识
