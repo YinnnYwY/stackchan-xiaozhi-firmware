@@ -344,11 +344,12 @@
             display: flex; align-items: center; gap: 5px;
             margin-left: auto; flex: none;
         }
-        #ap_list a .sig-bar {
-            display: inline-flex; gap: 2px; align-items: flex-end;
+        #ap_list a .sig-icon {
+            display: inline-flex; align-items: flex-end;
+            vertical-align: middle;
         }
-        #ap_list a .sig-bar span {
-            width: 3px; border-radius: 2px; background: var(--accent);
+        #ap_list a .sig-icon svg {
+            width: 18px; height: 18px;
         }
 
         /* ========== Advanced rows ========== */
@@ -1562,19 +1563,21 @@
                         const link = document.createElement('a');
                         link.href = '#';
 
-                        // Signal strength bars
-                        let barCount = 1;
-                        if (ap.rssi > -50) barCount = 4;
-                        else if (ap.rssi > -65) barCount = 3;
-                        else if (ap.rssi > -75) barCount = 2;
-                        let barsHtml = '<span class="sig-bar">';
-                        for (let i = 0; i < 4; i++) {
-                            barsHtml += '<span style="height:' + (6 + i * 5) + 'px;opacity:' + (i < barCount ? '1' : '0.2') + ';"></span>';
-                        }
-                        barsHtml += '</span>';
+                        // Signal strength WiFi arc SVG
+                        let bars = [0.2, 0.2, 0.2, 0.2];
+                        if (ap.rssi > -50) bars = [1, 1, 1, 1];
+                        else if (ap.rssi > -60) bars = [0.2, 1, 1, 1];
+                        else if (ap.rssi > -70) bars = [0.2, 0.2, 1, 1];
+                        else if (ap.rssi > -80) bars = [0.2, 0.2, 0.2, 1];
+                        const sigSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">'
+                            + '<path d="M1.42 16a16 16 0 0 1 21.16 0" opacity="' + bars[0] + '"/>'
+                            + '<path d="M5 12.55a11 11 0 0 1 14.08 0" opacity="' + bars[1] + '"/>'
+                            + '<path d="M8.53 9.11a6 6 0 0 1 6.95 0" opacity="' + bars[2] + '"/>'
+                            + '<circle cx="12" cy="5" r="2" opacity="' + bars[3] + '"/>'
+                            + '</svg>';
 
                         const icon = ap.authmode === 0 ? ' 🌐' : ' 🔒';
-                        link.innerHTML = ap.ssid + ' ' + icon + '<span class="ap-dbm">' + ap.rssi + ' dBm ' + barsHtml + '</span>';
+                        link.innerHTML = ap.ssid + ' ' + icon + '<span class="ap-dbm"><span class="sig-icon">' + sigSvg + '</span> ' + ap.rssi + ' dBm</span>';
                         
                         link.addEventListener('click', event => {
                             event.preventDefault();
