@@ -24,7 +24,7 @@ Built on [xiaozhi-esp32](https://github.com/78/xiaozhi-esp32), focused on the **
 | 💡 Emotion LED Ring | WS2812×12 | 21 emotion colors, controlled via PY32 IO Expander |
 | 🎯 Servo Tracking | SCS Bus | GC0308 face tracking + idle scanning, pauses during conversation |
 | 😴 Smart Sleep | — | 30s idle: lights off / servos off / screen off, wake word to resume |
-| 🔌 Reconfigure Wi-Fi | — | Idle long-press screen 5s to enter 192.168.4.1 config page (redesigned UI) |
+| 🔌 Reconfigure Wi-Fi | — | Idle long-press screen 5s to enter 192.168.4.1 config page (redesigned UI, upgraded to esp-wifi-connect v3.2.1, dark mode) |
 | ✂️ Text Interruption | — | Inject text messages during conversation without silent discard |
 | 🔧 MCP Tools | — | LED / Volume / Brightness / Camera / System Info |
 
@@ -113,6 +113,7 @@ Edit `main/boards/m5stack-core-s3/m5stack_core_s3.cc`:
 <details>
 <summary>Click to expand</summary>
 
+- **2026-06-16** · esp-wifi-connect v3.1.5 → v3.2.1: CSS design tokens + dark mode + gradient background + scan animation + 45 languages; OTA config and sleep mode visibility enabled
 - **2026-06-15** · Wi-Fi config page (192.168.4.1) redesign: iOS-style segmented control + large rounded cards + signal strength visualization + StackChan branding
 - **2026-06-11** · Fixed sleep mechanism (restored idle check, no more false sleep during conversation, timeout 60s → 30s); Idle long-press screen 5s to enter Wi-Fi config mode; Mute BMI270 motion sensor during speech to prevent servo shake from triggering IMU
 - **2026-06-10** · Build fixes + version check retry optimization (`MAX_RETRY=1`) + default WebSocket protocol; Touch/SendUserText long text interception fix (≤24 bytes); Disabled remote OTA upgrade; Split motion pools into `display+tag`, removed morning greeting, removed `upgrade_firmware` MCP tool

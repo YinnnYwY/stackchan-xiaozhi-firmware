@@ -65,48 +65,25 @@
         }
 
         /* ========== Header ========== */
-        .brand-header {
+        .app-header {
             display: flex;
             align-items: center;
-            justify-content: center;
             gap: 10px;
-            margin-bottom: 10px;
+            margin: 0 4px 10px;
         }
-        .brand-header .logo-icon {
-            width: 34px; height: 34px;
-            min-width: 34px;
-            background: linear-gradient(135deg, #2563eb, #60a5fa);
-            border-radius: 9px;
+        .app-header .logo {
+            width: 32px;
+            height: 32px;
+            flex: none;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 17px;
-            line-height: 1;
+            border-radius: 9px;
+            background: var(--accent);
+            color: #fff;
             box-shadow: var(--shadow);
         }
-        .brand-header .brand-text {
-            text-align: left;
-        }
-        .brand-header .brand-text h1 {
-            margin: 0;
-            font-size: 16px;
-            font-weight: 700;
-            color: var(--text);
-            letter-spacing: -0.3px;
-            line-height: 1.3;
-        }
-        .brand-header .brand-text .sub {
-            font-size: 11px;
-            color: var(--text-muted);
-            font-weight: 500;
-        }
-
-        .header-row {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 12px;
-        }
+        .app-header .logo svg { width: 19px; height: 19px; }
 
         /* ========== Card ========== */
         .card {
@@ -339,23 +316,6 @@
             background: var(--accent-soft);
             text-decoration: none;
         }
-        #ap_list a .ap-dbm {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            display: flex;
-            align-items: center;
-            gap: 5px;
-            flex: none;
-        }
-        #ap_list a .sig-bar {
-            display: inline-flex;
-            gap: 2px;
-            align-items: flex-end;
-        }
-        #ap_list a .sig-bar span {
-            width: 3px;
-            border-radius: 2px;
-            background: var(--accent);
-        }
 
         /* ========== Advanced rows ========== */
         #ota_url_row { margin-bottom: 16px; }
@@ -484,19 +444,23 @@
     </div>
 
     <div class="page">
-    <!-- StackChan Brand Header -->
-    <div class="brand-header">
-        <div class="logo-icon">🤖</div>
-        <div class="brand-text">
-            <h1>StackChan 配网</h1>
-            <div class="sub">设备网络配置</div>
-        </div>
-    </div>
-
-    <!-- Header row: language switcher -->
-    <div class="header-row">
-        <span></span>
+    <!-- Header -->
+    <header class="app-header">
+        <span class="logo" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M5 12.55a11 11 0 0 1 14.08 0"/>
+                <path d="M1.42 9a16 16 0 0 1 21.16 0"/>
+                <path d="M8.53 16.11a6 6 0 0 1 6.95 0"/>
+                <line x1="12" y1="20" x2="12.01" y2="20"/>
+            </svg>
+        </span>
+        <!-- Language switcher -->
         <div class="language-switch">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="10"/>
+                <line x1="2" y1="12" x2="22" y2="12"/>
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+            </svg>
             <select id="language" onchange="changeLanguage()">
             <option value="ar-SA">العربية</option>
             <option value="bg-BG">Български</option>
@@ -538,7 +502,7 @@
             <option value="zh-TW">繁體中文</option>
             </select>
         </div>
-    </div>
+    </header>
 
     <div class="card">
     <!-- Tabs -->
@@ -1608,21 +1572,15 @@
                     data.aps.forEach(ap => {
                         const link = document.createElement('a');
                         link.href = '#';
-
-                        // Signal strength bars
-                        let barCount = 1;
-                        if (ap.rssi > -50) barCount = 4;
-                        else if (ap.rssi > -65) barCount = 3;
-                        else if (ap.rssi > -75) barCount = 2;
-                        let barsHtml = '<span class="sig-bar">';
-                        for (let i = 0; i < 4; i++) {
-                            barsHtml += '<span style="height:' + (6 + i * 5) + 'px;opacity:' + (i < barCount ? '1' : '0.2') + ';"></span>';
+                        link.textContent = ap.ssid + ' (' + ap.rssi + ' dBm)';
+                        
+                        // Add lock icon for secured networks
+                        if (ap.authmode === 0) {
+                            link.textContent += ' 🌐';
+                        } else {
+                            link.textContent += ' 🔒';
                         }
-                        barsHtml += '</span>';
-
-                        const icon = ap.authmode === 0 ? ' 🌐' : ' 🔒';
-                        link.innerHTML = icon + ' ' + ap.ssid + '<span class="ap-dbm">' + ap.rssi + ' dBm ' + barsHtml + '</span>';
-
+                        
                         link.addEventListener('click', event => {
                             event.preventDefault();
                             ssid.value = ap.ssid;
