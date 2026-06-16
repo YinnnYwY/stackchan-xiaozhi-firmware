@@ -1673,9 +1673,10 @@ private:
     void RegisterExpressionMcpTool() {
         auto& mcp = McpServer::GetInstance();
         mcp.AddTool("self.face.expression",
-            "Set the facial expression/emotion on screen. "
-            "Available emotions: neutral, happy, sad, angry, thinking, surprised, laughing, crying, sleepy, winking, loving, cool, confident, confused, embarrassed, funny, relaxed, shocked, silly. "
-            "Use this when the user asks to show a specific emotion or the conversation tone calls for one.",
+            "Set the facial expression/emotion on screen (line-art animated emote style). "
+            "Common emotions: neutral, happy, sad, angry, surprised, thinking, sleepy, blink, dizzy, loading, speaking, listening, idle. "
+            "Use this when the user asks to show a specific emotion or the conversation tone calls for one. "
+            "If the emotion name is not found in the asset pack, it will be ignored safely.",
             PropertyList({
                 Property("emotion", kPropertyTypeString)
             }),
