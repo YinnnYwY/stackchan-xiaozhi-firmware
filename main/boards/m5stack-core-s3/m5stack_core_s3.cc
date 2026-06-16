@@ -1672,7 +1672,6 @@ private:
 
     void RegisterExpressionMcpTool() {
         auto& mcp = McpServer::GetInstance();
-        auto display = GetDisplay();
         mcp.AddTool("self.face.expression",
             "Set the facial expression/emotion on screen. "
             "Available emotions: neutral, happy, sad, angry, thinking, surprised, laughing, crying, sleepy, winking, loving, cool, confident, confused, embarrassed, funny, relaxed, shocked, silly. "
@@ -1680,9 +1679,12 @@ private:
             PropertyList({
                 Property("emotion", kPropertyTypeString)
             }),
-            [display](const PropertyList& props) -> ReturnValue {
+            [this](const PropertyList& props) -> ReturnValue {
                 auto emotion = props["emotion"].value<std::string>();
-                display->SetEmotion(emotion.c_str());
+                auto display = GetDisplay();
+                if (display) {
+                    display->SetEmotion(emotion.c_str());
+                }
                 ESP_LOGI(TAG, "MCP face expression: %s", emotion.c_str());
                 return true;
             });
