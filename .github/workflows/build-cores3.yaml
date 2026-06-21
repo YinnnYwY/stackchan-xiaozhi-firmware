@@ -18,11 +18,31 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Stash author's customized HTML + clean managed_components
+        shell: bash
+        run: |
+          # 作者把 78__esp-wifi-connect/assets/*.html 直接 commit 进 repo（在
+          # managed_components/ 这个本应 .gitignore 的路径下），但没附带 .component_hash
+          # 等 metadata，导致 IDF component manager 拒绝复用、又不肯重下。
+          # 这里把作者改过的 HTML 暂存出来，删整个 managed_components/，让 idf.py 重下，
+          # 然后再覆盖回作者的 HTML。
+          mkdir -p /tmp/stash-wifi-html
+          if [ -d managed_components/78__esp-wifi-connect/assets ]; then
+            cp -r managed_components/78__esp-wifi-connect/assets/* /tmp/stash-wifi-html/ 2>/dev/null || true
+          fi
+          rm -rf managed_components
+
       - name: Build StackChan-XiaoZhi
         shell: bash
         run: |
           . $IDF_PATH/export.sh
           idf.py set-target esp32s3
+          # 第一遍：让 component manager 重新下 78__esp-wifi-connect 拿全 metadata
+          idf.py reconfigure || true
+          # 把作者改过的 HTML 覆盖回来（component manager 不会校验 assets 内容）
+          if [ -d managed_components/78__esp-wifi-connect/assets ] && [ -d /tmp/stash-wifi-html ]; then
+            cp -r /tmp/stash-wifi-html/* managed_components/78__esp-wifi-connect/assets/ || true
+          fi
           idf.py build
 
       - name: Pack flash artifacts
