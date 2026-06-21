@@ -1,14 +1,26 @@
-# 🤖 StackChan-XiaoZhi
+# 🤖 StackChan-XiaoZhi (Claude Code bridge fork)
 
-> M5Stack Core S3 Stack-chan 陪伴机器人固件 —— 触摸 · 体感 · 情绪灯 · 舵机
+> M5Stack Core S3 Stack-chan 陪伴机器人固件 — Servo MCP 工具 + 唤醒词长期在线 + Claude Code 桥接
 
-基于 [xiaozhi-esp32](https://github.com/78/xiaozhi-esp32)，专注**陪伴感**体验。源自 [mo-hantang/Stackchan-HtSz](https://github.com/mo-hantang/Stackchan-HtSz)。
+基于 [xiaozhi-esp32](https://github.com/78/xiaozhi-esp32) 官方固件，本 fork 在 `codex-refactor` 分支加了：
+
+- ✨ 4 个 servo MCP 工具（`self.head.move / center / nod / shake`）暴露给 LLM 语音调用
+- 🐛 修 servo "转过去又弹回" bug（FaceTracker + Application + SetEmotion 三重并发）
+- 💤 禁用 light sleep，让唤醒词 7×24 在线（默认会 30 秒关麦克风）
+- 🤖 [Stack-chan ↔ Claude Code 桥接](https://github.com/heavenchenggong/stackchan-claude-bridge) — 配套项目，让派蒙能查你本地知识库 / 跑 skill / 用 30+ MCP
+
+完整说明 + 部署步骤 → **[heavenchenggong/stackchan-claude-bridge](https://github.com/heavenchenggong/stackchan-claude-bridge)**
+
+下载预编译固件 → [Actions Artifacts](https://github.com/heavenchenggong/StackChan-XiaoZhi/actions/workflows/build-cores3.yaml)
+
+---
+
+## 原项目说明（以下保留上游 README）
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-ESP32--S3-green?logo=espressif" alt="ESP32-S3">
   <img src="https://img.shields.io/badge/framework-ESP--IDF%20v5.5-blue?logo=espressif" alt="ESP-IDF v5.5">
   <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="License">
-  <img src="https://img.shields.io/github/v/release/howecheung/StackChan-XiaoZhi" alt="Release">
 </p>
 
 ---
