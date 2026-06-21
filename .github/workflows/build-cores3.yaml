@@ -52,9 +52,11 @@ jobs:
           cp build/bootloader/bootloader.bin out/
           cp build/partition_table/partition-table.bin out/
           cp build/ota_data_initial.bin out/
-          cp build/xiaozhi.bin out/
-          # srmodels (wake word) is critical
+          # app binary is named after CMake project (StackChan-XiaoZhi.bin)
+          cp build/StackChan-XiaoZhi.bin out/xiaozhi.bin
+          # srmodels (wake word) + assets
           cp build/srmodels/srmodels.bin out/ 2>/dev/null || true
+          cp build/generated_assets.bin out/ 2>/dev/null || true
           . $IDF_PATH/export.sh
           esptool.py --chip esp32s3 merge_bin -o out/merged-binary.bin \
             --flash_mode dio --flash_size 16MB --flash_freq 80m \
@@ -62,7 +64,8 @@ jobs:
             0x8000    build/partition_table/partition-table.bin \
             0xd000    build/ota_data_initial.bin \
             0x10000   build/srmodels/srmodels.bin \
-            0x410000  build/xiaozhi.bin || true
+            0x410000  build/StackChan-XiaoZhi.bin \
+            0xa10000  build/generated_assets.bin || true
           ls -la out/
 
       - uses: actions/upload-artifact@v4
