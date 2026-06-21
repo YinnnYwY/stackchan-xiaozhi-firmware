@@ -1735,32 +1735,70 @@ private:
     void RegisterServoMcpTools() {
         // 4 个 servo 控制工具暴露给 LLM —— 调头部到指定角度、回中、点头、摇头。
         // 默认 firmware 把 servo 当自主行为不暴露，这里恢复出来让用户语音控制。
+        //
+        // 关键：FaceTracker 每 ~150ms 用人脸位置覆盖 servo（servo_->MoveTo(yaw, pitch, 150)），
+        // 所以我们直接调 servo_.MoveTo 会被立刻覆盖。Nod/Shake 之所以能工作是因为它们
+        // 启动 task 跑动画，并在 task 里 PauseTracker，结束再 Resume。这里我们用
+        // PauseTracker 然后调 MoveTo 然后保持一段时间防止 FaceTracker 抢回控制权。
         auto& mcp = McpServer::GetInstance();
+
+        // 辅助 lambda：暂停 FaceTracker + 移动 + 短延迟后恢复（让位置稳定）
+        auto move_with_pause = [this](int yaw, int pitch, int time_ms, int hold_ms) {
+            // 暂停 FaceTracker（如果已启动）
+            face_tracker_.Pause();
+            servo_.PauseScan();
+            servo_.MoveTo(yaw, pitch, time_ms);
+            // 用 task 保持一段时间，否则函数立刻返回，FaceTracker 立刻 Resume 接管
+            int total_hold = time_ms + hold_ms;
+            struct HoldCtx { StackChanServo* s; FaceTracker* t; int ms; bool resume_tracker; };
+            auto* ctx = new HoldCtx{&servo_, &face_tracker_, total_hold, false};
+            xTaskCreate([](void* arg) {
+                auto* c = static_cast<HoldCtx*>(arg);
+                vTaskDelay(pdMS_TO_TICKS(c->ms));
+                if (c->resume_tracker) c->t->Resume();
+                // ResumeScan 留给用户下次调 center 时手动恢复（保持当前位置直到 LLM
+                // 显式说"回正"或下次对话开启）
+                delete c;
+                vTaskDelete(nullptr);
+            }, "servo_hold", 2048, ctx, 2, nullptr, 1);
+        };
 
         mcp.AddTool("self.head.move",
             "Move the head/face to a specific angle. Use this when user says 'turn left/right', "
             "'look up/down', 'tilt your head N degrees', etc. "
-            "yaw: -60 to 60 degrees (negative=left, positive=right, 0=center). "
-            "pitch: -10 to 60 degrees (small=look down, larger=look up; 30 is normal eye level).",
+            "yaw: -45 to 45 degrees (negative=left, positive=right, 0=center). "
+            "pitch: 5 to 60 degrees (small=look down, larger=look up; 30 is normal eye level).",
             PropertyList({
-                Property("yaw", kPropertyTypeInteger, -60, 60),
-                Property("pitch", kPropertyTypeInteger, -10, 60),
+                Property("yaw", kPropertyTypeInteger, -45, 45),
+                Property("pitch", kPropertyTypeInteger, 5, 60),
             }),
-            [this](const PropertyList& props) -> ReturnValue {
+            [this, move_with_pause](const PropertyList& props) -> ReturnValue {
                 int yaw = props["yaw"].value<int>();
                 int pitch = props["pitch"].value<int>();
-                servo_.PauseScan();
-                servo_.MoveTo(yaw, pitch, 800);
+                move_with_pause(yaw, pitch, 800, 3000);  // 3s hold 保持位置
                 ESP_LOGI(TAG, "MCP head move: yaw=%d pitch=%d", yaw, pitch);
                 return true;
             });
 
         mcp.AddTool("self.head.center",
-            "Move the head back to the center/forward-facing position.",
+            "Move the head back to the center/forward-facing position and resume face tracking.",
             PropertyList(),
-            [this](const PropertyList&) -> ReturnValue {
+            [this, move_with_pause](const PropertyList&) -> ReturnValue {
+                // center = (0, 30) + 让 FaceTracker 接管（resume）
+                face_tracker_.Pause();
+                servo_.PauseScan();
                 servo_.Center();
-                servo_.ResumeScan();
+                // 800ms 后 Resume 让人脸追踪恢复
+                struct ResumeCtx { FaceTracker* t; StackChanServo* s; };
+                auto* ctx = new ResumeCtx{&face_tracker_, &servo_};
+                xTaskCreate([](void* arg) {
+                    auto* c = static_cast<ResumeCtx*>(arg);
+                    vTaskDelay(pdMS_TO_TICKS(800));
+                    c->t->Resume();
+                    c->s->ResumeScan();
+                    delete c;
+                    vTaskDelete(nullptr);
+                }, "center_resume", 2048, ctx, 2, nullptr, 1);
                 ESP_LOGI(TAG, "MCP head center");
                 return true;
             });
