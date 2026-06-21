@@ -87,8 +87,14 @@ public:
         if (pitch_deg > 60) pitch_deg = 60;
         int yaw_pos = 460 + yaw_deg * 16 / 5;
         int pitch_pos = 620 + pitch_deg * 16 / 5;
+        ESP_LOGI("Servo", "MoveTo yaw=%d pitch=%d t=%d (caller=%p)",
+                 yaw_deg, pitch_deg, time_ms, __builtin_return_address(0));
         bus_.WritePos(1, yaw_pos, time_ms, 0);
         bus_.WritePos(2, pitch_pos, time_ms, 0);
+        // 记当前命令位置——Nod/Shake 动画用这个作 base，而不是 tracker_->GetYaw()
+        // 后者只反映人脸追踪目标，不反映 MCP head.move 设的硬位置。
+        last_yaw_deg_ = yaw_deg;
+        last_pitch_deg_ = pitch_deg;
     }
 
     void PauseScan() {
@@ -109,6 +115,10 @@ public:
 
     void SetFaceTracker(FaceTracker* ft) { tracker_ = ft; }
 
+    // 当前命令位置（最后一次 MoveTo 设的）— Nod/Shake 用这个作 base
+    int GetCurrentYaw() const { return last_yaw_deg_; }
+    int GetCurrentPitch() const { return last_pitch_deg_; }
+
     void Nod();
     void Shake();
     void Tilt();
@@ -128,6 +138,8 @@ private:
     FaceTracker* tracker_ = nullptr;
     bool scan_running_ = false;
     volatile bool anim_running_ = false;
+    int last_yaw_deg_ = 0;
+    int last_pitch_deg_ = 30;
 };
 
 class FaceTracker {
@@ -287,9 +299,10 @@ struct ServoAnimCtx {
 void StackChanServo::Nod() {
     if (anim_running_) return;
     anim_running_ = true;
-    auto* ctx = new ServoAnimCtx{this,
-        tracker_ ? (int)tracker_->GetYaw() : 0,
-        tracker_ ? (int)tracker_->GetPitch() : 30};
+    // 用 servo 当前命令位置作 base —— 不用 tracker_->GetYaw()，因为后者只反映
+    // 人脸追踪的目标值，不反映 LLM head.move 工具设的硬位置。这样 Nod 在
+    // 当前位置上下点头，不会把头甩回 (0, 30)。
+    auto* ctx = new ServoAnimCtx{this, GetCurrentYaw(), GetCurrentPitch()};
     if (tracker_) tracker_->Pause(false);
     xTaskCreatePinnedToCore([](void* arg) {
         auto* c = static_cast<ServoAnimCtx*>(arg);
@@ -313,9 +326,7 @@ void StackChanServo::Nod() {
 void StackChanServo::Shake() {
     if (anim_running_) return;
     anim_running_ = true;
-    auto* ctx = new ServoAnimCtx{this,
-        tracker_ ? (int)tracker_->GetYaw() : 0,
-        tracker_ ? (int)tracker_->GetPitch() : 30};
+    auto* ctx = new ServoAnimCtx{this, GetCurrentYaw(), GetCurrentPitch()};
     if (tracker_) tracker_->Pause(false);
     xTaskCreatePinnedToCore([](void* arg) {
         auto* c = static_cast<ServoAnimCtx*>(arg);
@@ -339,9 +350,7 @@ void StackChanServo::Shake() {
 void StackChanServo::Tilt() {
     if (anim_running_) return;
     anim_running_ = true;
-    auto* ctx = new ServoAnimCtx{this,
-        tracker_ ? (int)tracker_->GetYaw() : 0,
-        tracker_ ? (int)tracker_->GetPitch() : 30};
+    auto* ctx = new ServoAnimCtx{this, GetCurrentYaw(), GetCurrentPitch()};
     if (tracker_) tracker_->Pause(false);
     xTaskCreatePinnedToCore([](void* arg) {
         auto* c = static_cast<ServoAnimCtx*>(arg);
@@ -1085,6 +1094,8 @@ public:
             if (servo_) servo_->PauseScan();
         }
         // 非 sleepy 不再无条件 Resume face_tracker——它现在跟设备状态走，由 SetStatus 控制
+        // 注意：head_locked 时 Nod/Shake 仍然会播放，但因为 Nod/Shake 用
+        // GetCurrentYaw/Pitch 作 base，会在当前位置就地点头/摇头，不会把头甩回 (0, 30)。
         if (servo_ && emotion && !servo_->IsAnimating()) {
             if (!strcmp(emotion, "happy") || !strcmp(emotion, "loving") ||
                 !strcmp(emotion, "laughing") || !strcmp(emotion, "confident") ||
