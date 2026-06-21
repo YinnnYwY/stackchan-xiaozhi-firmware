@@ -155,6 +155,10 @@ public:
     }
 
     void Resume() {
+        // 当 manual_lock_ 被 LLM 工具锁住时，忽略状态机周期 Resume，
+        // 否则 Application::Listening/Speaking 每次刷新都会自动 Resume，
+        // 让用户"派蒙转 30 度"立刻被人脸追踪复位。
+        if (manual_lock_) return;
         if (paused_) {
             paused_ = false;
             has_prev_ = false;
@@ -162,6 +166,15 @@ public:
             ESP_LOGI("FaceTrack", "Resumed");
         }
     }
+
+    // 手动锁：lock=true 后，外部 Resume() 无效（除非 lock=false 解锁再 Resume）。
+    // LLM head.move/center 用这个保证位置不被自动 tracker 抢回去。
+    void SetManualLock(bool locked) {
+        manual_lock_ = locked;
+        ESP_LOGI("FaceTrack", "Manual lock %s", locked ? "ENABLED" : "DISABLED");
+    }
+
+    bool IsManualLocked() const { return manual_lock_; }
 
     bool IsPaused() const { return paused_; }
     float GetYaw() const { return yaw_; }
@@ -254,6 +267,7 @@ private:
     StackChanServo* servo_ = nullptr;
     TaskHandle_t task_ = nullptr;
     volatile bool paused_ = false;
+    volatile bool manual_lock_ = false;  // LLM head 工具锁住时为 true
     bool tracking_ = false;
     bool has_prev_ = false;
     int no_move_count_ = 0;
@@ -1742,31 +1756,20 @@ private:
         // PauseTracker 然后调 MoveTo 然后保持一段时间防止 FaceTracker 抢回控制权。
         auto& mcp = McpServer::GetInstance();
 
-        // 辅助 lambda：暂停 FaceTracker + 移动 + 短延迟后恢复（让位置稳定）
-        // 关键: Pause(false) — 否则 FaceTracker::Pause 默认参数 resume_scan=true
-        // 会立刻打开 IdleScan，4 秒内随机扫描会把我们设的位置覆盖掉。
-        auto move_with_pause = [this](int yaw, int pitch, int time_ms, int hold_ms) {
-            face_tracker_.Pause(false);  // 不要 resume scan!
+        // 辅助 lambda：暂停 FaceTracker + 移动 + 锁住（防 Application 周期性 Resume）
+        // 关键: 我们用 SetManualLock(true) 让 FaceTracker::Resume() 失效，
+        // 否则 Application 状态机每秒钟 listening/speaking tick 时都会 Resume 它。
+        // 后续 self.head.center 工具会 SetManualLock(false) 解锁。
+        auto move_with_pause = [this](int yaw, int pitch, int time_ms) {
+            face_tracker_.SetManualLock(true);
+            face_tracker_.Pause(false);
             servo_.PauseScan();
             servo_.MoveTo(yaw, pitch, time_ms);
-            // 用 task 保持一段时间，否则函数立刻返回，FaceTracker 立刻 Resume 接管
-            int total_hold = time_ms + hold_ms;
-            struct HoldCtx { StackChanServo* s; FaceTracker* t; int ms; bool resume_tracker; };
-            auto* ctx = new HoldCtx{&servo_, &face_tracker_, total_hold, false};
-            xTaskCreate([](void* arg) {
-                auto* c = static_cast<HoldCtx*>(arg);
-                vTaskDelay(pdMS_TO_TICKS(c->ms));
-                if (c->resume_tracker) c->t->Resume();
-                // ResumeScan 留给用户下次调 center 时手动恢复（保持当前位置直到 LLM
-                // 显式说"回正"或下次对话开启）
-                delete c;
-                vTaskDelete(nullptr);
-            }, "servo_hold", 2048, ctx, 2, nullptr);
         };
 
         mcp.AddTool("self.head.move",
-            "Move the head/face to a specific angle. Use this when user says 'turn left/right', "
-            "'look up/down', 'tilt your head N degrees', etc. "
+            "Move the head/face to a specific angle and HOLD it there until user says "
+            "to re-center. Use when user says 'turn left/right N degrees', 'look up/down', etc. "
             "yaw: -45 to 45 degrees (negative=left, positive=right, 0=center). "
             "pitch: 5 to 60 degrees (small=look down, larger=look up; 30 is normal eye level).",
             PropertyList({
@@ -1776,31 +1779,35 @@ private:
             [this, move_with_pause](const PropertyList& props) -> ReturnValue {
                 int yaw = props["yaw"].value<int>();
                 int pitch = props["pitch"].value<int>();
-                move_with_pause(yaw, pitch, 800, 3000);  // 3s hold 保持位置
-                ESP_LOGI(TAG, "MCP head move: yaw=%d pitch=%d", yaw, pitch);
+                move_with_pause(yaw, pitch, 800);
+                ESP_LOGI(TAG, "MCP head move: yaw=%d pitch=%d (LOCKED)", yaw, pitch);
                 return true;
             });
 
         mcp.AddTool("self.head.center",
-            "Move the head back to the center/forward-facing position and resume face tracking.",
+            "Move the head back to center/forward position AND release the manual lock "
+            "so face tracking can resume. Use when user says 'reset/center your head', "
+            "'回正', 'look at me', 'face front', etc.",
             PropertyList(),
-            [this, move_with_pause](const PropertyList&) -> ReturnValue {
-                // center = (0, 30) + 让 FaceTracker 接管（resume）
+            [this](const PropertyList&) -> ReturnValue {
+                // 先锁着移动到 center
+                face_tracker_.SetManualLock(true);
                 face_tracker_.Pause(false);
                 servo_.PauseScan();
                 servo_.Center();
-                // 800ms 后 Resume 让人脸追踪恢复
-                struct ResumeCtx { FaceTracker* t; StackChanServo* s; };
-                auto* ctx = new ResumeCtx{&face_tracker_, &servo_};
+                // 800ms 后解锁 + 恢复 tracker
+                struct UnlockCtx { FaceTracker* t; StackChanServo* s; };
+                auto* ctx = new UnlockCtx{&face_tracker_, &servo_};
                 xTaskCreate([](void* arg) {
-                    auto* c = static_cast<ResumeCtx*>(arg);
+                    auto* c = static_cast<UnlockCtx*>(arg);
                     vTaskDelay(pdMS_TO_TICKS(800));
+                    c->t->SetManualLock(false);
                     c->t->Resume();
                     c->s->ResumeScan();
                     delete c;
                     vTaskDelete(nullptr);
-                }, "center_resume", 2048, ctx, 2, nullptr);
-                ESP_LOGI(TAG, "MCP head center");
+                }, "center_unlock", 2048, ctx, 2, nullptr);
+                ESP_LOGI(TAG, "MCP head center (UNLOCKING)");
                 return true;
             });
 
