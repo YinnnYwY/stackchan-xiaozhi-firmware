@@ -166,6 +166,8 @@ public:
         if (!paused_) {
             paused_ = true;
             tracking_ = false;
+            // 待机/结束对话时,别让"着急找人"的表情卡住。
+            if (searching_) { searching_ = false; if (search_cb_) search_cb_(false); }
             if (resume_scan) servo_->ResumeScan();
             ESP_LOGI("FaceTrack", "Paused (scan=%d)", resume_scan);
         }
@@ -195,6 +197,9 @@ public:
 
     // 摄像头追踪到的人脸位置回调给头像眼睛(即使没有舵机/脖子也能"看向你")
     void SetGazeCallback(std::function<void(float, float)> cb) { gaze_cb_ = std::move(cb); }
+
+    // 找不到人、持续一段时间后开始"着急找"(true)/重新找到或暂停时结束(false)
+    void SetSearchingCallback(std::function<void(bool)> cb) { search_cb_ = std::move(cb); }
 
     bool IsPaused() const { return paused_; }
     float GetYaw() const { return yaw_; }
@@ -253,9 +258,32 @@ private:
             if (no_move_count_ > 6 && tracking_) {
                 tracking_ = false;
             }
+            // 找不到人:先等一会儿(约 3s,避免"安静坐着说话"就被误判成不见了),
+            // 还是没动静就开始"着急找人"——眼睛(和舵机,若有)慢慢左右扫,
+            // 表情切成 Confused(带"?")。
+            const int kSearchStartCycles = 30;  // TaskFunc 每 100ms 跑一次 → ~3s
+            if (no_move_count_ == kSearchStartCycles) {
+                searching_ = true;
+                search_phase_ = 0;
+                if (search_cb_) search_cb_(true);
+                ESP_LOGI("FaceTrack", "Lost person, start searching");
+            }
+            if (searching_) {
+                search_phase_++;
+                float sweep = sinf(search_phase_ * 0.05f);         // -1..1
+                if (gaze_cb_) gaze_cb_(sweep, 0.15f * sinf(search_phase_ * 0.03f));
+                if (search_phase_ % 8 == 0) {                       // 每 ~0.8s 挪一次舵机,别太frantic
+                    servo_->MoveTo((int)(sweep * 30.0f), 30, 500);
+                }
+            }
             return;
         }
 
+        if (searching_) {
+            searching_ = false;
+            if (search_cb_) search_cb_(false);
+            ESP_LOGI("FaceTrack", "Found person, stop searching");
+        }
         no_move_count_ = 0;
         if (!tracking_) {
             servo_->PauseScan();
@@ -298,6 +326,9 @@ private:
     float smooth_y_ = 0.0f;
     uint8_t prev_frame_[DS_W * DS_H];
     std::function<void(float, float)> gaze_cb_;
+    bool searching_ = false;
+    int search_phase_ = 0;
+    std::function<void(bool)> search_cb_;
 };
 
 // ── 闹钟系统:本地存储(NVS)+ 本地计时(不依赖云端推送)──────────────
@@ -639,6 +670,10 @@ public:
         gaze_ext_ms_ = lv_tick_get();
     }
 
+    // 摄像头找不到人时:临时显示"着急找人"的表情(眼睛已经在扫,见 SetGazeTarget 调用方)。
+    // 只借用 Draw() 那一帧的表情显示,不改 expression_ 本身——LLM 的正常表情不会被打乱。
+    void SetSearching(bool s) { searching_ = s; }
+
 private:
     static void TimerCb(lv_timer_t* t) {
         static_cast<LvglAvatar*>(lv_timer_get_user_data(t))->OnTick();
@@ -758,9 +793,23 @@ private:
 
         int bob = (int)(breath_ * 3.0f);                            // 呼吸:轻微上下浮
         if (mouth_open_ > 0.05f) bob -= (int)(mouth_open_ * 3.0f);   // 说话时轻轻上跳(无嘴,靠身体动)
+
+        // 找不到人时,这一帧临时借用 Confused 眼型 + "?" 标记表达"着急找你",
+        // 只改这一帧的显示,不动 expression_/overlay_ 本身——搜索一结束就自动
+        // 恢复 LLM 设的正常表情,不会被打乱状态。
+        Expression saved_expr = expression_;
+        Overlay saved_overlay = overlay_;
+        if (searching_) {
+            expression_ = Expression::Confused;
+            overlay_.question_mark = true;
+        }
+
         DrawBody(&layer, bob);
         DrawFace(&layer, bob);
         DrawExtras(&layer, bob);
+
+        expression_ = saved_expr;
+        overlay_ = saved_overlay;
 
         lv_canvas_finish_layer(canvas_, &layer);
     }
@@ -1033,6 +1082,7 @@ private:
     float gaze_h_ = 0.0f;
     float gaze_v_ = 0.0f;
     uint32_t gaze_ext_ms_ = 0;   // 上次外部(摄像头追踪)设视线的时间,期间暂停随机扫视
+    bool searching_ = false;    // 找不到人,正在"着急找"(临时借用表情,见 Draw())
 
     float breath_amp_ = 3.0f;
     uint32_t breath_period_steps_ = 100;
@@ -1116,6 +1166,11 @@ public:
     void SetGaze(float gh, float gv) {
         DisplayLockGuard lock(this);
         if (avatar_.IsReady()) avatar_.SetGazeTarget(gh, gv);
+    }
+    // 摄像头找不到人、开始"着急找"时(true)/找到或暂停时(false)
+    void SetSearching(bool s) {
+        DisplayLockGuard lock(this);
+        if (avatar_.IsReady()) avatar_.SetSearching(s);
     }
     void SetServo(StackChanServo* s) { servo_ = s; }
     void SetLedUpdater(std::function<void(const char*)> fn) { led_updater_ = std::move(fn); }
@@ -2410,6 +2465,9 @@ public:
             avatar_display->SetFaceTracker(&face_tracker_);
             face_tracker_.SetGazeCallback([avatar_display](float gh, float gv) {
                 avatar_display->SetGaze(gh, gv);
+            });
+            face_tracker_.SetSearchingCallback([avatar_display](bool s) {
+                avatar_display->SetSearching(s);
             });
         }
         avatar_display->SetLedUpdater([this](const char* emotion) {
