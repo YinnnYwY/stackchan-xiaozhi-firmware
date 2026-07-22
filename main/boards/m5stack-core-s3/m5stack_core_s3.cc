@@ -582,16 +582,16 @@ private:
     void Draw() {
         if (!canvas_) return;
         const lv_color_t bg = lv_color_make(0x00, 0x00, 0x00);
-        const lv_color_t fg = lv_color_make(0xFF, 0xFF, 0xFF);
 
         lv_canvas_fill_bg(canvas_, bg, LV_OPA_COVER);
         lv_layer_t layer;
         lv_canvas_init_layer(canvas_, &layer);
 
-        DrawMouth(&layer, fg, bg);
-        DrawEye(&layer, fg, bg, false);
-        DrawEye(&layer, fg, bg, true);
-        DrawOverlay(&layer, fg, bg);
+        int bob = (int)(breath_ * 3.0f);                            // 呼吸:轻微上下浮
+        if (mouth_open_ > 0.05f) bob -= (int)(mouth_open_ * 3.0f);   // 说话时轻轻上跳(无嘴,靠身体动)
+        DrawBody(&layer, bob);
+        DrawFace(&layer, bob);
+        DrawExtras(&layer, bob);
 
         lv_canvas_finish_layer(canvas_, &layer);
     }
@@ -671,301 +671,176 @@ private:
         lv_draw_line(layer, &d);
     }
 
-    void DrawMouth(lv_layer_t* layer, lv_color_t fg, lv_color_t bg) {
-        const int cx = 163;
-        const int cy = 148 + (int)(breath_ * 3.0f);
-        const int y_off = (int)(breath_ * 2.0f);
-
-        switch (expression_) {
-            case Expression::Cool:
-                DrawLine(layer, cx - 12, cy + y_off + 2, cx + 12, cy + y_off, 3, true, fg);
-                return;
-            case Expression::Confident:
-                DrawLine(layer, cx - 14, cy + y_off + 3, cx + 14, cy + y_off, 3, true, fg);
-                return;
-            case Expression::Silly:
-                DrawLine(layer, cx - 13, cy + y_off + 4, cx + 13, cy + y_off, 3, true, fg);
-                return;
-            case Expression::Embarrassed:
-                DrawLine(layer, cx - 12, cy + y_off, cx + 12, cy + y_off, 3, true, fg);
-                return;
-            case Expression::Kissy: {
-                int my = cy + y_off;
-                DrawArc(layer, cx, my - 6, 6, 270, 450, 3, fg, false);
-                DrawArc(layer, cx, my + 6, 6, 270, 450, 3, fg, false);
-                FillCircle(layer, cx, my, 2, fg);
-                return;
-            }
-            case Expression::Winking:
-                DrawArc(layer, cx, cy + y_off - 5, 12, 0, 180, 3, fg);
-                return;
-            case Expression::Laughing: {
-                int y_top = cy + y_off - 28;
-                FillRoundRect(layer, cx - 40, y_top, 80, 30, 12, fg);
-                return;
-            }
-            case Expression::Funny:
-                FillRoundRect(layer, cx - 25, cy + y_off - 10, 50, 20, 8, fg);
-                return;
-            case Expression::Relaxed:
-                DrawLine(layer, cx - 20, cy + y_off, cx + 20, cy + y_off, 4, true, fg);
-                return;
-            case Expression::Delicious: {
-                int h = 4 + (int)((60 - 4) * 0.3f);
-                int w = 50 + (int)((90 - 50) * 0.7f);
-                FillRoundRect(layer, cx - w / 2, cy + y_off - h / 2, w, h, 7, fg);
-                return;
-            }
-            case Expression::Shocked: {
-                FillRoundRect(layer, cx - 25, cy + y_off - 30, 50, 60, 10, fg);
-                return;
-            }
-            case Expression::Surprised: {
-                int h = 4 + (int)((60 - 4) * 0.5f);
-                int w = 50 + (int)((90 - 50) * 0.5f);
-                FillRoundRect(layer, cx - w / 2, cy + y_off - h / 2, w, h, 12, fg);
-                return;
-            }
-            case Expression::Thinking: {
-                DrawLine(layer, cx - 15, cy + y_off, cx + 15, cy + y_off, 3, true, fg);
-                return;
-            }
-            case Expression::Confused: {
-                DrawLine(layer, cx - 15, cy + y_off, cx + 15, cy + y_off + 2, 3, true, fg);
-                return;
-            }
-            default: {
-                int h = 4 + (int)((60 - 4) * mouth_open_);
-                int w = 50 + (int)((90 - 50) * (1.0f - mouth_open_));
-                int radius = (int)(mouth_open_ * 10);
-                FillRoundRect(layer, cx - w / 2, cy + y_off - h / 2, w, h, radius, fg);
-                return;
-            }
-        }
+    // ── Clawd(Claude Code 吉祥物)身体:珊瑚方块躯干 + 小手臂 + 三条腿 ──
+    void DrawBody(lv_layer_t* layer, int bob) {
+        const lv_color_t BODY = lv_color_make(0xC9, 0x7C, 0x5A);
+        int o = bob;
+        FillRect(layer, 96, 66 + o, 128, 78, BODY);   // 主体
+        FillRect(layer, 80, 98 + o, 16, 18, BODY);    // 左臂
+        FillRect(layer, 224, 98 + o, 16, 18, BODY);   // 右臂
+        FillRect(layer, 100, 144 + o, 20, 22, BODY);  // 腿 ×3
+        FillRect(layer, 150, 144 + o, 20, 22, BODY);
+        FillRect(layer, 200, 144 + o, 20, 22, BODY);
     }
 
-    void DrawEye(lv_layer_t* layer, lv_color_t fg, lv_color_t bg, bool is_left) {
-        if (expression_ == Expression::Cool) return;
-
-        const int cx_base = is_left ? 230 : 90;
-        const int cy_base_y = is_left ? 96 : 93;
-        const int cy = cy_base_y + (int)(breath_ * 3.0f);
-
-        float gh, gv;
-        GetGazeOverride(&gh, &gv);
-        const int off_x = (int)(gh * 3.0f);
-        const int off_y = (int)(gv * 3.0f);
-
-        if (overlay_.heart_eyes) {
-            const lv_color_t red = lv_color_make(0xFF, 0x40, 0x70);
-            int hcx = cx_base + off_x;
-            int hcy = cy + off_y;
-            FillCircle(layer, hcx - 6, hcy - 3, 7, red);
-            FillCircle(layer, hcx + 6, hcy - 3, 7, red);
-            FillTriangle(layer, hcx - 12, hcy + 1, hcx + 12, hcy + 1, hcx, hcy + 13, red);
-            return;
-        }
-
-        if (expression_ == Expression::Shocked) {
-            FillCircle(layer, cx_base, cy, 13, fg);
-            FillCircle(layer, cx_base, cy, 3, bg);
-            return;
-        }
-
-        if (expression_ == Expression::Surprised) {
-            FillCircle(layer, cx_base, cy, 10, fg);
-            return;
-        }
-
-        if (expression_ == Expression::Confused) {
-            int r = is_left ? 8 : 6;
-            FillCircle(layer, cx_base + off_x, cy + off_y, r, fg);
-            return;
-        }
-
-        if (expression_ == Expression::Winking) {
-            if (is_left) {
-                DrawLine(layer, cx_base + 8, cy - 4, cx_base - 8, cy, 5, true, fg);
-                DrawLine(layer, cx_base - 8, cy, cx_base + 8, cy + 4, 5, true, fg);
-            } else {
-                FillCircle(layer, cx_base, cy, 8, fg);
-            }
-            return;
-        }
-
-        if (expression_ == Expression::Silly) {
-            int r = 8;
-            FillCircle(layer, cx_base + off_x, cy + off_y, r, fg);
-            int x0 = cx_base + off_x - r;
-            int y0 = cy + off_y;
-            int w = r * 2 + 4;
-            int h = r + 2;
-            if (!is_left) h += 2;
-            FillCircle(layer, cx_base + off_x, cy + off_y, (int)(r / 1.5f), bg);
-            FillRect(layer, x0, y0, w, h, bg);
-            return;
-        }
-
-        if (expression_ == Expression::Laughing) {
-            int r = 8;
-            FillCircle(layer, cx_base + off_x, cy + off_y, r, fg);
-            int x0 = cx_base + off_x - r - 2;
-            int y0 = cy + off_y;
-            int w = r * 2 + 8;
-            int h = r + 4;
-            FillCircle(layer, cx_base + off_x, cy + off_y, (int)(r / 1.5f), bg);
-            FillRect(layer, x0, y0, w, h, bg);
-            return;
-        }
-
-        if (expression_ == Expression::Sleepy) {
-            if (is_left) {
-                DrawLine(layer, cx_base - 8 + off_x, cy - 2 + off_y,
-                                cx_base + 8 + off_x, cy + 2 + off_y, 4, true, fg);
-            } else {
-                DrawLine(layer, cx_base - 8 + off_x, cy + 2 + off_y,
-                                cx_base + 8 + off_x, cy - 2 + off_y, 4, true, fg);
-            }
-            return;
-        }
-
-        if (expression_ == Expression::Relaxed) {
-            int r = 8;
-            FillCircle(layer, cx_base + off_x, cy + off_y, r, fg);
-            int x0 = cx_base + off_x - r - 1;
-            int y0 = cy + off_y - 1;
-            int w = r * 2 + 6;
-            int h = r + 3;
-            FillCircle(layer, cx_base + off_x, cy + off_y, (int)(r / 1.5f), bg);
-            FillRect(layer, x0, y0, w, h, bg);
-            return;
-        }
-
-        const int r = 8;
-
-        if (eye_open_ratio_ > 0) {
-            FillCircle(layer, cx_base + off_x, cy + off_y, r, fg);
-
-            if (expression_ == Expression::Angry || expression_ == Expression::Sad || expression_ == Expression::Crying) {
-                int x0 = cx_base + off_x - r;
-                int y0 = cy + off_y - r;
-                int x1 = x0 + r * 2;
-                int y1 = y0;
-                bool sad = (expression_ == Expression::Sad || expression_ == Expression::Crying);
-                int x2 = ((!is_left) != (!sad)) ? x0 : x1;
-                int y2 = y0 + r;
-                FillTriangle(layer, x0, y0, x1, y1, x2, y2, bg);
-            }
-
-            if (expression_ == Expression::Happy
-                || expression_ == Expression::Kissy || expression_ == Expression::Funny
-                || expression_ == Expression::Delicious) {
-                FillCircle(layer, cx_base + off_x, cy + off_y, r + 2, bg);
-                DrawArc(layer, cx_base + off_x, cy + off_y + r,
-                        r, 180, 360, 3, fg, true);
-            }
+    // 眼型 helper(全部矩形=像素风)
+    void EyeSquare(lv_layer_t* layer, int cx, int ey, int sz, lv_color_t c) {
+        FillRect(layer, cx - sz / 2, ey - sz / 2, sz, sz, c);
+    }
+    void EyeBar(lv_layer_t* layer, int cx, int ey, lv_color_t c) {   // 闭眼/睡:一条
+        FillRect(layer, cx - 7, ey - 2, 14, 4, c);
+    }
+    void HappyEye(lv_layer_t* layer, int cx, int ey, lv_color_t c) { // ^
+        FillRect(layer, cx - 8, ey + 1, 5, 4, c);
+        FillRect(layer, cx - 3, ey - 2, 6, 4, c);
+        FillRect(layer, cx + 3, ey + 1, 5, 4, c);
+    }
+    void HeartEye(lv_layer_t* layer, int cx, int ey, lv_color_t c) {
+        FillRect(layer, cx - 6, ey - 4, 5, 5, c);
+        FillRect(layer, cx + 1, ey - 4, 5, 5, c);
+        FillRect(layer, cx - 6, ey + 1, 12, 4, c);
+        FillRect(layer, cx - 2, ey + 5, 6, 3, c);
+    }
+    void Brows(lv_layer_t* layer, int lx, int rx, int ey, bool angry, lv_color_t c) {
+        if (angry) {
+            FillRect(layer, lx - 11, ey - 15, 8, 5, c); FillRect(layer, lx - 3, ey - 11, 8, 5, c);  // \.
+            FillRect(layer, rx + 3,  ey - 15, 8, 5, c); FillRect(layer, rx - 5, ey - 11, 8, 5, c);  // /
         } else {
-            FillRect(layer, cx_base - r + off_x, cy - 2 + off_y, r * 2, 4, fg);
+            FillRect(layer, lx - 11, ey - 11, 8, 5, c); FillRect(layer, lx - 3, ey - 15, 8, 5, c);  // /
+            FillRect(layer, rx + 3,  ey - 11, 8, 5, c); FillRect(layer, rx - 5, ey - 15, 8, 5, c);  // \.
         }
     }
 
-    void DrawOverlay(lv_layer_t* layer, lv_color_t fg, lv_color_t bg) {
+    // ── Clawd 的脸:只有眼睛(无嘴)。眨眼/表情/视线都在这里 ──
+    void DrawFace(lv_layer_t* layer, int bob) {
+        const lv_color_t EYE   = lv_color_make(0x1A, 0x14, 0x12);
+        const lv_color_t DARKB = lv_color_make(0x8A, 0x4A, 0x32);
+        const lv_color_t HEART = lv_color_make(0xE0, 0x55, 0x5A);
+
+        const Expression e = expression_;
+        const int LX = 126, RX = 194;
+
+        float gh, gv; GetGazeOverride(&gh, &gv);
+        const int gx = (int)(gh * 3.0f);
+        const int gy = (int)(gv * 5.0f);
+        const int ey = 100 + bob + gy;
+
+        const bool happyEyes = (e == Expression::Happy || e == Expression::Laughing ||
+                                e == Expression::Delicious || e == Expression::Kissy);
+        const bool heart     = (e == Expression::Loving);
+        const bool cool      = (e == Expression::Cool);
+        const bool sleepy    = (e == Expression::Sleepy || e == Expression::Relaxed);
+        const bool wink      = (e == Expression::Winking || e == Expression::Silly);
+        const bool surprised = (e == Expression::Surprised || e == Expression::Shocked ||
+                                e == Expression::Funny);
+        const bool sad       = (e == Expression::Sad || e == Expression::Crying);
+        const bool angry     = (e == Expression::Angry);
+        const bool confused  = (e == Expression::Confused);
+        const bool blinkClosed = (eye_open_ratio_ < 0.5f) && BlinkAllowed();
+
+        if (cool) return;                                 // 墨镜由 DrawExtras 画,不画眼
+        if (heart) { HeartEye(layer, LX + gx, ey, HEART); HeartEye(layer, RX + gx, ey, HEART); return; }
+        if (sleepy) { EyeBar(layer, LX, ey, EYE); EyeBar(layer, RX, ey, EYE); return; }
+        if (happyEyes && !blinkClosed) { HappyEye(layer, LX, ey, EYE); HappyEye(layer, RX, ey, EYE); return; }
+        if (wink) { EyeSquare(layer, LX + gx, ey, 14, EYE); EyeBar(layer, RX, ey, EYE); return; }
+        if (blinkClosed) { EyeBar(layer, LX, ey, EYE); EyeBar(layer, RX, ey, EYE); return; }
+
+        if (surprised) {
+            int sz = (e == Expression::Shocked) ? 22 : 20;
+            EyeSquare(layer, LX + gx, ey, sz, EYE); EyeSquare(layer, RX + gx, ey, sz, EYE);
+            return;
+        }
+        if (confused) {
+            EyeSquare(layer, LX + gx, ey, 12, EYE); EyeSquare(layer, RX + gx, ey, 16, EYE);
+            return;
+        }
+        if (sad) {
+            EyeSquare(layer, LX + gx, ey + 3, 13, EYE); EyeSquare(layer, RX + gx, ey + 3, 13, EYE);
+            Brows(layer, LX, RX, ey, false, DARKB);
+            return;
+        }
+        if (angry) {
+            EyeSquare(layer, LX + gx, ey + 2, 13, EYE); EyeSquare(layer, RX + gx, ey + 2, 13, EYE);
+            Brows(layer, LX, RX, ey, true, DARKB);
+            return;
+        }
+        // 默认:Neutral / Confident / Embarrassed / Thinking ...
+        EyeSquare(layer, LX + gx, ey, 14, EYE);
+        EyeSquare(layer, RX + gx, ey, 14, EYE);
+    }
+
+    // ── 附加装饰:腮红/眼泪/墨镜/飘心/闪光/zzz/问号 等(无嘴,全走眼与装饰)──
+    void DrawExtras(lv_layer_t* layer, int bob) {
+        const lv_color_t WHITE = lv_color_make(0xFF, 0xFF, 0xFF);
+        const lv_color_t SPARK = lv_color_make(0xF5, 0xD9, 0xA8);
+        const lv_color_t TEAR  = lv_color_make(0x6F, 0xB8, 0xE0);
+        const lv_color_t HEART = lv_color_make(0xE0, 0x55, 0x5A);
+        const lv_color_t CHEEK = lv_color_make(0xE0, 0x8A, 0x72);
+        const lv_color_t GLASS = lv_color_make(0x1A, 0x16, 0x1C);
+        const Expression e = expression_;
+        const int LX = 126, RX = 194;
+        const int eyB = 100 + bob;
+
+        auto spark = [&](int x, int y, int s, lv_color_t c) {
+            FillRect(layer, x - 2, y - s, 4, s * 2, c);
+            FillRect(layer, x - s, y - 2, s * 2, 4, c);
+        };
+        auto heart = [&](int hx, int hy) {
+            FillRect(layer, hx - 8, hy - 4, 6, 6, HEART); FillRect(layer, hx + 2, hy - 4, 6, 6, HEART);
+            FillRect(layer, hx - 8, hy + 2, 16, 4, HEART); FillRect(layer, hx - 4, hy + 6, 8, 3, HEART);
+        };
+
+        // 腮红
+        if (e == Expression::Happy || e == Expression::Loving || e == Expression::Kissy ||
+            e == Expression::Delicious || e == Expression::Embarrassed || overlay_.cheek_blush) {
+            FillRect(layer, LX - 6, 118 + bob, 12, 7, CHEEK);
+            FillRect(layer, RX - 6, 118 + bob, 12, 7, CHEEK);
+        }
+        // 眼泪(哭)
         if (overlay_.tear) {
-            const lv_color_t blue = lv_color_make(0x40, 0xA0, 0xFF);
-            int tx = 90;
-            int ty = 115 + (int)(breath_ * 3.0f);
-            FillCircle(layer, tx, ty, 7, blue);
-            FillTriangle(layer, tx - 6, ty - 2, tx + 6, ty - 2, tx, ty - 15, blue);
+            FillRect(layer, LX - 12, eyB + 11, 5, 7, TEAR);
+            FillRect(layer, LX - 12, eyB + 19, 5, 5, TEAR);
         }
-
-        if (overlay_.cheek_blush) {
-            const lv_color_t pink = lv_color_make(0xFF, 0x64, 0x82);
-            for (int i = 0; i < 3; i++) {
-                int x_start = 47 + i * 8;
-                int x_end = x_start + 6;
-                DrawLine(layer, x_start, 138, x_end, 130, 3, true, pink);
-            }
-            for (int i = 0; i < 3; i++) {
-                int x_start = 251 + i * 8;
-                int x_end = x_start + 6;
-                DrawLine(layer, x_start, 138, x_end, 130, 3, true, pink);
-            }
-        }
-
+        // 墨镜(cool)
         if (overlay_.cool_glasses) {
-            FillRoundRect(layer, 85, 84, 50, 24, 5, fg);
-            FillRoundRect(layer, 185, 84, 50, 24, 5, fg);
-            DrawLine(layer, 85, 84, 235, 84, 2, false, fg);
+            FillRect(layer, 110, 90 + bob, 100, 14, GLASS);
+            FillRect(layer, 154, 95 + bob, 12, 4, GLASS);
         }
-
-        if (overlay_.excl_mark) {
-            DrawLine(layer, 291, 50, 291, 68, 4, true, fg);
-            FillCircle(layer, 291, 76, 2, fg);
-        }
-
+        // 飘心(亲亲 / 爱)
+        if (overlay_.kiss_heart) heart(250, 62 + bob);
+        if (e == Expression::Loving) heart(254, 60 + bob);
+        // 思考点点 + 闪光
         if (overlay_.think_bubble) {
-            FillRoundRect(layer, 245, 47, 50, 25, 12, fg);
-            FillCircle(layer, 258, 60, 3, bg);
-            FillCircle(layer, 270, 60, 3, bg);
-            FillCircle(layer, 282, 60, 3, bg);
-            FillCircle(layer, 273, 85, 6, fg);
-            FillCircle(layer, 258, 110, 4, fg);
+            FillRect(layer, 244, 92 + bob, 5, 5, WHITE);
+            FillRect(layer, 256, 80 + bob, 6, 6, WHITE);
+            spark(272, 64 + bob, 7, SPARK);
         }
-
-        if (overlay_.star_burst) {
-            const int cx_s = 290, cy_s = 60;
-            FillRect(layer, cx_s - 3, cy_s - 3, 6, 6, fg);
-            FillTriangle(layer, cx_s, cy_s - 18, cx_s - 3, cy_s - 3, cx_s + 3, cy_s - 3, fg);
-            FillTriangle(layer, cx_s, cy_s + 18, cx_s - 3, cy_s + 3, cx_s + 3, cy_s + 3, fg);
-            FillTriangle(layer, cx_s - 18, cy_s, cx_s - 3, cy_s - 3, cx_s - 3, cy_s + 3, fg);
-            FillTriangle(layer, cx_s + 18, cy_s, cx_s + 3, cy_s - 3, cx_s + 3, cy_s + 3, fg);
+        // 惊喜闪光
+        if (overlay_.star_burst) spark(252, 58 + bob, 8, SPARK);
+        // 感叹号(震惊)
+        if (overlay_.excl_mark) {
+            FillRect(layer, 266, 48 + bob, 6, 14, WHITE);
+            FillRect(layer, 266, 64 + bob, 6, 5, WHITE);
         }
-
-        if (overlay_.wave_squiggle) {
-            DrawLine(layer, 148, 28, 154, 24, 2, true, fg);
-            DrawLine(layer, 154, 24, 160, 28, 2, true, fg);
-            DrawLine(layer, 160, 28, 166, 24, 2, true, fg);
-            DrawLine(layer, 166, 24, 172, 28, 2, true, fg);
-        }
-
-        if (overlay_.drool) {
-            const lv_color_t blue = lv_color_make(0x40, 0xA0, 0xFF);
-            int dx = 143;
-            int dy = 168 + (int)(breath_ * 3.0f);
-            FillCircle(layer, dx, dy, 4, blue);
-            FillTriangle(layer, dx - 3, dy - 2, dx + 3, dy - 2, dx, dy - 8, blue);
-        }
-
-        if (overlay_.laugh_lines) {
-            DrawLine(layer, 210, 150, 220, 142, 3, true, fg);
-            DrawLine(layer, 218, 156, 228, 148, 3, true, fg);
-        }
-
+        // 问号(疑惑)
         if (overlay_.question_mark) {
-            DrawArc(layer, 290, 50, 7, 180, 90, 4, fg, true);
-            FillCircle(layer, 290, 67, 3, fg);
+            FillRect(layer, 258, 58 + bob, 5, 5, WHITE);
+            FillRect(layer, 256, 66 + bob, 4, 10, WHITE);
+            FillRect(layer, 258, 80 + bob, 5, 5, WHITE);
         }
-
+        // zzz(睡)
         if (overlay_.zzz) {
-            auto draw_z = [&](int cx_z, int cy_z, int size, int w) {
-                int h = size / 2;
-                DrawLine(layer, cx_z - h, cy_z - h, cx_z + h, cy_z - h, w, false, fg);
-                DrawLine(layer, cx_z + h, cy_z - h, cx_z - h, cy_z + h, w, false, fg);
-                DrawLine(layer, cx_z - h, cy_z + h, cx_z + h, cy_z + h, w, false, fg);
+            auto Z = [&](int cx, int cy, int sz, int w) {
+                int h = sz / 2;
+                FillRect(layer, cx - h, cy - h, sz, w, WHITE);
+                FillRect(layer, cx - h, cy + h - w, sz, w, WHITE);
+                DrawLine(layer, cx + h, cy - h, cx - h, cy + h, w, false, WHITE);
             };
-            draw_z(258, 80, 8, 2);
-            draw_z(270, 70, 10, 3);
-            draw_z(286, 55, 14, 3);
+            Z(244, 86 + bob, 7, 2); Z(258, 70 + bob, 9, 3); Z(276, 52 + bob, 12, 3);
         }
-
-        if (overlay_.kiss_heart) {
-            const lv_color_t red = lv_color_make(0xFF, 0x40, 0x70);
-            int hx = 195;
-            int hy = 130;
-            FillCircle(layer, hx - 3, hy - 1, 4, red);
-            FillCircle(layer, hx + 3, hy - 1, 4, red);
-            FillTriangle(layer, hx - 6, hy + 1, hx + 6, hy + 1, hx, hy + 8, red);
-        }
+        // 常驻小闪光(中性/自信/眨眼)
+        if (e == Expression::Neutral || e == Expression::Confident || e == Expression::Winking)
+            spark(250, 60 + bob, 6, SPARK);
     }
 
     lv_obj_t* canvas_ = nullptr;
