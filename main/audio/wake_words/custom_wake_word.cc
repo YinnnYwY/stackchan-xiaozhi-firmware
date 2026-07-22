@@ -106,8 +106,11 @@ bool CustomWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) 
     if (models_list == nullptr) threshold_ = 0.20f;
 #endif
     // 降低唤醒灵敏度以压制轻杂音/猫叫/游戏声等误唤醒(覆盖上面 Kconfig 的灵敏度)。
-    // multinet 检测阈值:越高越不容易被触发。太难唤醒→降到 0.68;仍常误唤醒→升到 0.85。
-    if (models_list == nullptr) threshold_ = 0.78f;
+    // multinet 检测阈值:越高越不容易被触发。之前 0.78 对"你好小克"这个新词太严
+    // (几乎叫不醒/要重复好几遍才触发一次,导致"听到半句就开始回复"——其实是迟触发
+    // 只抓到后半段,不是真的打断)。回落到中间值重新校准。
+    // 太难唤醒→再降到 0.35;仍容易被杂音/无关说话误唤醒→升到 0.6。
+    if (models_list == nullptr) threshold_ = 0.50f;
 
     // Add a second wake word here if needed, e.g.:
     // commands_.push_back({"ni hao xiao zhi", "你好小智", "wake"});
