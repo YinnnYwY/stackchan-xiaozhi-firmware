@@ -7,6 +7,8 @@
 #include "i2c_device.h"
 #include "axp2101.h"
 #include "mcp_server.h"
+#include "assets/lang_config.h"
+#include "settings.h"
 
 #include <esp_log.h>
 #include <esp_heap_caps.h>
@@ -18,6 +20,10 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctime>
+#include <vector>
+#include <functional>
+#include <cJSON.h>
 #include "esp_video.h"
 #include "lvgl.h"
 #include "SCSCL.h"
@@ -292,6 +298,156 @@ private:
     float smooth_y_ = 0.0f;
     uint8_t prev_frame_[DS_W * DS_H];
     std::function<void(float, float)> gaze_cb_;
+};
+
+// ── 闹钟系统:本地存储(NVS)+ 本地计时(不依赖云端推送)──────────────
+// 云端到设备是"拉取式"(reverse-MCP),没法在闹钟时间到时主动戳设备,
+// 所以触发靠固件自己每 ~20s 拿本机时间(开机时小智 OTA 服务器已经把
+// 系统时间设好,见 ota.cc settimeofday)比对;命中后走 Alert()(本地
+// 状态/表情/提示音,离线也响)+ SendUserText()(复用摸头/触摸那条
+// canned-message 通道,让云端用她的语气自然"叫"一声,最佳努力)。
+struct AlarmEntry {
+    int id = 0;
+    int hour = 0;
+    int minute = 0;
+    uint8_t weekday_mask = 0;    // bit0=周日..bit6=周六;0 = 一次性
+    bool enabled = true;
+    std::string label;           // 语音里提到的简短理由,比如"起床"
+    int32_t last_fired_ymd = 0;  // 20260722 这种整数,防止同一天内重复触发
+};
+
+class AlarmManager {
+public:
+    void Load() {
+        Settings settings("alarms", false);
+        std::string json = settings.GetString("list", "[]");
+        alarms_.clear();
+        cJSON* arr = cJSON_Parse(json.c_str());
+        if (arr && cJSON_IsArray(arr)) {
+            cJSON* item;
+            cJSON_ArrayForEach(item, arr) {
+                AlarmEntry a;
+                cJSON* v;
+                v = cJSON_GetObjectItem(item, "id");     a.id = v ? v->valueint : 0;
+                v = cJSON_GetObjectItem(item, "hour");   a.hour = v ? v->valueint : 0;
+                v = cJSON_GetObjectItem(item, "minute"); a.minute = v ? v->valueint : 0;
+                v = cJSON_GetObjectItem(item, "wd");     a.weekday_mask = v ? (uint8_t)v->valueint : 0;
+                v = cJSON_GetObjectItem(item, "en");     a.enabled = v ? cJSON_IsTrue(v) : true;
+                v = cJSON_GetObjectItem(item, "label");  a.label = (v && cJSON_IsString(v)) ? v->valuestring : "";
+                v = cJSON_GetObjectItem(item, "lf");     a.last_fired_ymd = v ? v->valueint : 0;
+                if (a.id > 0) alarms_.push_back(a);
+            }
+        }
+        if (arr) cJSON_Delete(arr);
+        next_id_ = 1;
+        for (auto& a : alarms_) if (a.id >= next_id_) next_id_ = a.id + 1;
+        ESP_LOGI("Alarm", "Loaded %d alarm(s)", (int)alarms_.size());
+    }
+
+    void Save() {
+        cJSON* arr = cJSON_CreateArray();
+        for (auto& a : alarms_) {
+            cJSON* item = cJSON_CreateObject();
+            cJSON_AddNumberToObject(item, "id", a.id);
+            cJSON_AddNumberToObject(item, "hour", a.hour);
+            cJSON_AddNumberToObject(item, "minute", a.minute);
+            cJSON_AddNumberToObject(item, "wd", a.weekday_mask);
+            cJSON_AddBoolToObject(item, "en", a.enabled);
+            cJSON_AddStringToObject(item, "label", a.label.c_str());
+            cJSON_AddNumberToObject(item, "lf", a.last_fired_ymd);
+            cJSON_AddItemToArray(arr, item);
+        }
+        char* s = cJSON_PrintUnformatted(arr);
+        Settings settings("alarms", true);
+        settings.SetString("list", s ? s : "[]");
+        if (s) cJSON_free(s);
+        cJSON_Delete(arr);
+    }
+
+    int Add(int hour, int minute, uint8_t weekday_mask, const std::string& label) {
+        AlarmEntry a;
+        a.id = next_id_++;
+        a.hour = hour; a.minute = minute; a.weekday_mask = weekday_mask;
+        a.enabled = true; a.label = label; a.last_fired_ymd = 0;
+        alarms_.push_back(a);
+        Save();
+        return a.id;
+    }
+
+    bool Cancel(int id) {
+        for (auto it = alarms_.begin(); it != alarms_.end(); ++it) {
+            if (it->id == id) { alarms_.erase(it); Save(); return true; }
+        }
+        return false;
+    }
+
+    std::string ListText() const {
+        if (alarms_.empty()) return "当前没有设置任何闹钟";
+        std::string s;
+        for (auto& a : alarms_) {
+            char buf[96];
+            snprintf(buf, sizeof(buf), "#%d %02d:%02d %s%s%s%s；",
+                     a.id, a.hour, a.minute, WeekdayMaskText(a.weekday_mask).c_str(),
+                     a.label.empty() ? "" : " ", a.label.c_str(),
+                     a.enabled ? "" : "(已关闭)");
+            s += buf;
+        }
+        return s;
+    }
+
+    // 每 ~20s 调用一次;命中的闹钟通过回调交出去"响铃"(只传值,不传引用/指针,
+    // 避免回调延后执行时悬空)。一次性闹钟响过即自动关闭。
+    void CheckAndFire(const std::function<void(int id, int hour, int minute, const std::string& label)>& fire_cb) {
+        time_t now = time(nullptr);
+        struct tm tmv;
+        localtime_r(&now, &tmv);
+        if (tmv.tm_year < 2025 - 1900) return;  // 系统时间还没同步(未做过 OTA 检查),别误触发
+        int32_t ymd = (tmv.tm_year + 1900) * 10000 + (tmv.tm_mon + 1) * 100 + tmv.tm_mday;
+        bool changed = false;
+        for (auto& a : alarms_) {
+            if (!a.enabled) continue;
+            if (a.hour != tmv.tm_hour || a.minute != tmv.tm_min) continue;
+            if (a.last_fired_ymd == ymd) continue;  // 这一天已经响过,避免 20s 轮询内重复触发
+            if (a.weekday_mask != 0 && !(a.weekday_mask & (1 << tmv.tm_wday))) continue;
+
+            a.last_fired_ymd = ymd;
+            if (a.weekday_mask == 0) a.enabled = false;  // 一次性闹钟响过就关闭
+            changed = true;
+            if (fire_cb) fire_cb(a.id, a.hour, a.minute, a.label);
+        }
+        if (changed) Save();
+    }
+
+    static uint8_t ParseRepeat(const std::string& r) {
+        if (r == "daily")    return 0b1111111;
+        if (r == "weekdays") return 0b0111110;  // 周一~周五
+        if (r == "weekends") return 0b1000001;  // 周日+周六
+        return 0;  // "once" 及其它未识别值,一律按一次性处理
+    }
+
+    static std::string WeekdayMaskText(uint8_t mask) {
+        if (mask == 0) return "(一次性)";
+        if (mask == 0b1111111) return "(每天)";
+        if (mask == 0b0111110) return "(工作日)";
+        if (mask == 0b1000001) return "(周末)";
+        static const char* names[7] = {"日", "一", "二", "三", "四", "五", "六"};
+        std::string s = "(每周";
+        for (int i = 0; i < 7; i++) if (mask & (1 << i)) s += names[i];
+        s += ")";
+        return s;
+    }
+
+    // UTF-8 安全截断(只在字符边界切,避免切出半个汉字乱码)
+    static std::string Utf8Truncate(const std::string& s, size_t max_bytes) {
+        if (s.size() <= max_bytes) return s;
+        size_t cut = max_bytes;
+        while (cut > 0 && (static_cast<unsigned char>(s[cut]) & 0xC0) == 0x80) cut--;
+        return s.substr(0, cut);
+    }
+
+private:
+    std::vector<AlarmEntry> alarms_;
+    int next_id_ = 1;
 };
 
 struct ServoAnimCtx {
@@ -1263,6 +1419,8 @@ private:
     uint8_t si12t_last_state_ = 0;
     bool servo_ok_ = false;
     bool low_batt_warned_ = false;
+    AlarmManager alarm_mgr_;
+    esp_timer_handle_t alarm_timer_ = nullptr;
 
     void InitializeBmi270() {
         // BMI270 实际在 0x69（不是 SDK 默认的 0x68），自己用 IDF i2c API + 底层 bmi270_init 绕过硬编码
@@ -1738,6 +1896,59 @@ private:
                 servo_.Shake();
                 ESP_LOGI(TAG, "MCP head shake");
                 return true;
+            });
+    }
+
+    // 闹钟:语音设置/查看/取消,由固件本地计时触发(不依赖舵机/云端推送)。
+    void RegisterAlarmMcpTools() {
+        auto& mcp = McpServer::GetInstance();
+
+        mcp.AddTool("self.alarm.set",
+            "Set an alarm/reminder that fires at a specific local time (device clock is "
+            "already synced, no need to ask the user for the date). Use when the user asks "
+            "to be reminded or woken up at a time, e.g. '明天早上7点叫我起床', '每天7点提醒我喝水'. "
+            "hour/minute are 24-hour local time. repeat: 'once' (default — fires once then "
+            "auto-disables), 'daily', 'weekdays' (Mon-Fri), or 'weekends' (Sat/Sun). "
+            "label is a VERY SHORT reason spoken back when it fires (e.g. '起床', '开会', '喝水') "
+            "— keep it to just a few characters, longer labels get truncated.",
+            PropertyList({
+                Property("hour", kPropertyTypeInteger, 0, 23),
+                Property("minute", kPropertyTypeInteger, 0, 59),
+                Property("repeat", kPropertyTypeString, std::string("once")),
+                Property("label", kPropertyTypeString, std::string("")),
+            }),
+            [this](const PropertyList& props) -> ReturnValue {
+                int hour = props["hour"].value<int>();
+                int minute = props["minute"].value<int>();
+                std::string repeat = props["repeat"].value<std::string>();
+                std::string label = props["label"].value<std::string>();
+                uint8_t mask = AlarmManager::ParseRepeat(repeat);
+                int id = alarm_mgr_.Add(hour, minute, mask, label);
+                char buf[80];
+                snprintf(buf, sizeof(buf), "闹钟已设置 #%d %02d:%02d %s", id, hour, minute,
+                         AlarmManager::WeekdayMaskText(mask).c_str());
+                ESP_LOGI(TAG, "MCP alarm.set: %s", buf);
+                return std::string(buf);
+            });
+
+        mcp.AddTool("self.alarm.list",
+            "List all currently set alarms/reminders with their id, time, repeat pattern and label. "
+            "Use this first if the user wants to cancel one but doesn't give an id.",
+            PropertyList(),
+            [this](const PropertyList&) -> ReturnValue {
+                return alarm_mgr_.ListText();
+            });
+
+        mcp.AddTool("self.alarm.cancel",
+            "Cancel/delete an alarm by its id (call self.alarm.list first to find the id).",
+            PropertyList({
+                Property("id", kPropertyTypeInteger, 1, 9999),
+            }),
+            [this](const PropertyList& props) -> ReturnValue {
+                int id = props["id"].value<int>();
+                bool ok = alarm_mgr_.Cancel(id);
+                ESP_LOGI(TAG, "MCP alarm.cancel: id=%d ok=%d", id, ok);
+                return ok ? std::string("已取消") : std::string("没找到这个闹钟编号");
             });
     }
 
@@ -2250,6 +2461,36 @@ public:
         batt_args.skip_unhandled_events = true;
         esp_timer_create(&batt_args, &batt_timer_);
         esp_timer_start_periodic(batt_timer_, 60000000);
+
+        // 闹钟:不依赖舵机/电量，独立于上面两个 timer。
+        alarm_mgr_.Load();
+        RegisterAlarmMcpTools();
+
+        esp_timer_create_args_t alarm_args = {};
+        alarm_args.callback = [](void* arg) {
+            auto* self = static_cast<M5StackCoreS3Board*>(arg);
+            self->alarm_mgr_.CheckAndFire([](int id, int hour, int minute, const std::string& label) {
+                (void)id; (void)hour; (void)minute;
+                // 不用 emoji：屏幕字体不一定有对应字形，用纯中文避免显示成方块。
+                std::string alert_msg = label.empty() ? std::string("闹钟时间到啦") : ("闹钟：" + label);
+                std::string voice_phrase = label.empty()
+                    ? std::string("闹钟时间到啦")
+                    : AlarmManager::Utf8Truncate(std::string("闹钟:") + label, 24);
+                auto& app = Application::GetInstance();
+                app.Schedule([&app, alert_msg, voice_phrase]() {
+                    // 本地保底：状态/表情/提示音，离线也响
+                    app.Alert("Alarm", alert_msg.c_str(), "surprised", Lang::Sounds::OGG_POPUP);
+                    // 最佳努力：复用摸头/触摸那条 canned-message 通道，让云端用她的语气自然"叫"一声
+                    app.SendUserText(voice_phrase);
+                });
+            });
+        };
+        alarm_args.arg = this;
+        alarm_args.name = "alarm_check";
+        alarm_args.dispatch_method = ESP_TIMER_TASK;
+        alarm_args.skip_unhandled_events = true;
+        esp_timer_create(&alarm_args, &alarm_timer_);
+        esp_timer_start_periodic(alarm_timer_, 20000000);  // 每 20s 比对一次本机时间
 
         GetBacklight()->RestoreBrightness();
     }
