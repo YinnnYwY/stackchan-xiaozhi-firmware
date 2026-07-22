@@ -187,6 +187,9 @@ public:
 
     bool IsManualLocked() const { return manual_lock_; }
 
+    // 摄像头追踪到的人脸位置回调给头像眼睛(即使没有舵机/脖子也能"看向你")
+    void SetGazeCallback(std::function<void(float, float)> cb) { gaze_cb_ = std::move(cb); }
+
     bool IsPaused() const { return paused_; }
     float GetYaw() const { return yaw_; }
     float GetPitch() const { return pitch_; }
@@ -272,6 +275,7 @@ private:
         if (pitch_ > 60) pitch_ = 60;
 
         servo_->MoveTo((int)yaw_, (int)pitch_, 150);
+        if (gaze_cb_) gaze_cb_(-target_x, target_y);   // 眼睛跟着追踪目标动(镜像水平)
     }
 
     EspVideo* camera_ = nullptr;
@@ -287,6 +291,7 @@ private:
     float smooth_x_ = 0.0f;
     float smooth_y_ = 0.0f;
     uint8_t prev_frame_[DS_W * DS_H];
+    std::function<void(float, float)> gaze_cb_;
 };
 
 struct ServoAnimCtx {
@@ -470,6 +475,14 @@ public:
     }
     void StopSpeaking() { speaking_until_ms_ = 0; }
 
+    // 摄像头追踪结果直接喂给眼睛视线(不依赖舵机/脖子也能"看向你")
+    void SetGazeTarget(float gh, float gv) {
+        if (gh < -1) gh = -1; else if (gh > 1) gh = 1;
+        if (gv < -1) gv = -1; else if (gv > 1) gv = 1;
+        gaze_h_ = gh; gaze_v_ = gv;
+        gaze_ext_ms_ = lv_tick_get();
+    }
+
 private:
     static void TimerCb(lv_timer_t* t) {
         static_cast<LvglAvatar*>(lv_timer_get_user_data(t))->OnTick();
@@ -562,7 +575,7 @@ private:
             eye_closed_ = false;
         }
 
-        if (SaccadeEnabled() && now - last_saccade_ms_ > 1500) {
+        if (SaccadeEnabled() && (now - gaze_ext_ms_ > 1200) && now - last_saccade_ms_ > 1500) {
             gaze_h_ = (rand() % 21 - 10) / 10.0f;
             gaze_v_ = (rand() % 21 - 10) / 10.0f;
             last_saccade_ms_ = now;
@@ -723,8 +736,8 @@ private:
         const int LX = 126, RX = 194;
 
         float gh, gv; GetGazeOverride(&gh, &gv);
-        const int gx = (int)(gh * 3.0f);
-        const int gy = (int)(gv * 5.0f);
+        const int gx = (int)(gh * 8.0f);   // 追踪视线幅度加大,让"看向你"更明显
+        const int gy = (int)(gv * 6.0f);
         const int ey = 100 + bob + gy;
 
         const bool happyEyes = (e == Expression::Happy || e == Expression::Laughing ||
@@ -863,6 +876,7 @@ private:
     float breath_ = 0.0f;
     float gaze_h_ = 0.0f;
     float gaze_v_ = 0.0f;
+    uint32_t gaze_ext_ms_ = 0;   // 上次外部(摄像头追踪)设视线的时间,期间暂停随机扫视
 
     float breath_amp_ = 3.0f;
     uint32_t breath_period_steps_ = 100;
@@ -941,6 +955,12 @@ public:
     }
 
     void SetFaceTracker(FaceTracker* ft) { face_tracker_ = ft; }
+
+    // 摄像头追踪到人时,把方向喂给头像的眼睛(没有舵机/脖子也能"看向你")
+    void SetGaze(float gh, float gv) {
+        DisplayLockGuard lock(this);
+        if (avatar_.IsReady()) avatar_.SetGazeTarget(gh, gv);
+    }
     void SetServo(StackChanServo* s) { servo_ = s; }
     void SetLedUpdater(std::function<void(const char*)> fn) { led_updater_ = std::move(fn); }
 
@@ -1021,7 +1041,9 @@ public:
         if (state == kDeviceStateListening || state == kDeviceStateSpeaking) {
             if (face_tracker_) face_tracker_->Resume();
         } else if (state == kDeviceStateIdle) {
-            if (face_tracker_) face_tracker_->Pause();
+            // 待机时顺带解除手动锁:避免用户曾用 head.move 转头后,
+            // 忘了 head.center,导致下次唤醒追踪永久失效。
+            if (face_tracker_) { face_tracker_->SetManualLock(false); face_tracker_->Pause(); }
         }
         bool is_active = (strstr(status, "聆听")
                        || strstr(status, "说话")
@@ -2170,10 +2192,14 @@ public:
         if (servo_ok_) {
             avatar_display->SetServo(&servo_);
         }
-        if (camera_ && camera_->IsOk() && servo_ok_) {
+        // 追踪不再要求舵机就绪:没有脖子也能靠眼睛"看向你"(见 SetGazeCallback)。
+        if (camera_ && camera_->IsOk()) {
             face_tracker_.Start(camera_, &servo_);
-            servo_.SetFaceTracker(&face_tracker_);
+            if (servo_ok_) servo_.SetFaceTracker(&face_tracker_);
             avatar_display->SetFaceTracker(&face_tracker_);
+            face_tracker_.SetGazeCallback([avatar_display](float gh, float gv) {
+                avatar_display->SetGaze(gh, gv);
+            });
         }
         avatar_display->SetLedUpdater([this](const char* emotion) {
             UpdateLedsFromEmotion(emotion);

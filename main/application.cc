@@ -704,7 +704,11 @@ void Application::HandleToggleChatEvent() {
         }
         SetListeningMode(mode);
     } else if (state == kDeviceStateSpeaking) {
+        // 打断:她说话时点一下 → 停下 → 清掉残留待发音频 → 重新开始聆听新内容
         AbortSpeaking(kAbortReasonNone);
+        while (audio_service_.PopPacketFromSendQueue());
+        play_popup_on_listening_ = true;
+        SetListeningMode(GetDefaultListeningMode());
     } else if (state == kDeviceStateListening) {
         protocol_->CloseAudioChannel();
     }
@@ -795,12 +799,13 @@ void Application::HandleWakeWordDetectedEvent() {
             // Schedule to let the state change be processed first (UI update),
             // then continue with OpenAudioChannel which may block for ~1 second
             Schedule([this, wake_word]() {
-                ContinueWakeWordInvoke(wake_word);
+                // 真实唤醒:先听、别让云端立刻接话(听主人说完再判断是不是在叫她)
+                ContinueWakeWordInvoke(wake_word, false);
             });
             return;
         }
         // Channel already opened, continue directly
-        ContinueWakeWordInvoke(wake_word);
+        ContinueWakeWordInvoke(wake_word, false);
     } else if (state == kDeviceStateSpeaking || state == kDeviceStateListening) {
         AbortSpeaking(kAbortReasonWakeWordDetected);
         // Clear send queue to avoid sending residues to server
@@ -823,7 +828,7 @@ void Application::HandleWakeWordDetectedEvent() {
     }
 }
 
-void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
+void Application::ContinueWakeWordInvoke(const std::string& wake_word, bool announce_wake_word) {
     // Check state again in case it was changed during scheduling
     if (GetDeviceState() != kDeviceStateConnecting) {
         return;
@@ -842,12 +847,21 @@ void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
 
     ESP_LOGI(TAG, "Wake word detected: %s", wake_word.c_str());
 #if CONFIG_SEND_WAKE_WORD_DATA
-    // Encode and send the wake word data to the server
+    // Drain the encoded wake-word audio. On a real wake (announce_wake_word=false)
+    // we discard it instead of sending it, and skip SendWakeWordDetected, so the
+    // cloud dispatcher does NOT treat the wake word itself as an utterance to
+    // reply to — it waits for the user's actual following speech.
     while (auto packet = audio_service_.PopWakeWordPacket()) {
-        protocol_->SendAudio(std::move(packet));
+        if (announce_wake_word) {
+            protocol_->SendAudio(std::move(packet));
+        }
     }
-    // Set the chat state to wake word detected
-    protocol_->SendWakeWordDetected(wake_word);
+    if (announce_wake_word) {
+        // Set the chat state to wake word detected
+        protocol_->SendWakeWordDetected(wake_word);
+    } else {
+        play_popup_on_listening_ = true;   // 本地提示音代替云端"打招呼"
+    }
     SetListeningMode(GetDefaultListeningMode());
 #else
     // Set flag to play popup sound after state changes to listening
