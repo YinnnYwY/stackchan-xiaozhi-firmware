@@ -105,6 +105,10 @@ bool CustomWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) 
 #elif defined(CONFIG_WAKE_WORD_SENSITIVITY_HIGH)
     if (models_list == nullptr) threshold_ = 0.20f;
 #endif
+    // 降低唤醒灵敏度以压制轻杂音/猫叫/游戏声等误唤醒(覆盖上面 Kconfig 的灵敏度)。
+    // multinet 检测阈值:越高越不容易被触发。太难唤醒→降到 0.55;仍常误唤醒→升到 0.78。
+    if (models_list == nullptr) threshold_ = 0.68f;
+
     // Add a second wake word here if needed, e.g.:
     // commands_.push_back({"ni hao xiao zhi", "你好小智", "wake"});
 

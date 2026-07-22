@@ -673,14 +673,16 @@ private:
 
     // ── Clawd(Claude Code 吉祥物)身体:珊瑚方块躯干 + 小手臂 + 三条腿 ──
     void DrawBody(lv_layer_t* layer, int bob) {
-        const lv_color_t BODY = lv_color_make(0xC9, 0x7C, 0x5A);
+        // 珊瑚色偏深、加饱和,补偿机器人 LCD 的"泛白"(电脑上偏艳,实机才正)
+        const lv_color_t BODY = lv_color_make(0xC8, 0x64, 0x3C);
         int o = bob;
         FillRect(layer, 96, 66 + o, 128, 78, BODY);   // 主体
         FillRect(layer, 80, 98 + o, 16, 18, BODY);    // 左臂
         FillRect(layer, 224, 98 + o, 16, 18, BODY);   // 右臂
-        FillRect(layer, 100, 144 + o, 20, 22, BODY);  // 腿 ×3
-        FillRect(layer, 150, 144 + o, 20, 22, BODY);
-        FillRect(layer, 200, 144 + o, 20, 22, BODY);
+        FillRect(layer, 103, 144 + o, 18, 22, BODY);  // 腿 ×4
+        FillRect(layer, 135, 144 + o, 18, 22, BODY);
+        FillRect(layer, 167, 144 + o, 18, 22, BODY);
+        FillRect(layer, 199, 144 + o, 18, 22, BODY);
     }
 
     // 眼型 helper(全部矩形=像素风)
