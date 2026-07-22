@@ -127,10 +127,9 @@ public:
 
 private:
     static void IdleScanCb(void* arg) {
-        auto* self = static_cast<StackChanServo*>(arg);
-        int yaw = (rand() % 51) - 25;
-        int pitch = 25 + (rand() % 11);
-        self->MoveTo(yaw, pitch, 1500);
+        // 待机不再随机甩头(用户要"别老动、对准我"):保持当前朝向不动。
+        // 头部只在对话时的人脸/动作追踪,或 LLM head.move 指令下才移动。
+        (void)arg;
     }
 
     SCSCL bus_;

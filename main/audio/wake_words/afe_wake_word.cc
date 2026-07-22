@@ -82,14 +82,10 @@ bool AfeWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) {
     afe_iface_ = esp_afe_handle_from_config(afe_config);
     afe_data_ = afe_iface_->create_from_config(afe_config);
 
-    // Fine-grained wake word threshold: higher = fewer false triggers
-#if defined(CONFIG_WAKE_WORD_SENSITIVITY_LOW)
-    afe_iface_->set_wakenet_threshold(afe_data_, 1, 0.70f);
-#elif defined(CONFIG_WAKE_WORD_SENSITIVITY_MEDIUM)
-    afe_iface_->set_wakenet_threshold(afe_data_, 1, 0.55f);
-#elif defined(CONFIG_WAKE_WORD_SENSITIVITY_HIGH)
-    afe_iface_->set_wakenet_threshold(afe_data_, 1, 0.45f);
-#endif
+    // Fine-grained wake word threshold: higher = fewer false triggers.
+    // 无条件调低唤醒灵敏度以减少环境噪音误唤醒(默认阈值偏灵敏)。
+    // 若正常说话也难唤醒,把 0.75 降到 0.65;若仍常被噪音误唤醒,升到 0.85。
+    afe_iface_->set_wakenet_threshold(afe_data_, 1, 0.75f);
 
     xTaskCreate([](void* arg) {
         auto this_ = (AfeWakeWord*)arg;
