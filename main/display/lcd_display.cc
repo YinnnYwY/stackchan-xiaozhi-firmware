@@ -72,7 +72,9 @@ LcdDisplay::LcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_
 
     // Load theme from settings
     Settings settings("display", false);
-    std::string theme_name = settings.GetString("theme", "light");
+    // 强制深色主题:设备是全屏 avatar(黑底),浅色主题会出现白底
+    std::string theme_name = "dark";
+    (void)settings;
     current_theme_ = LvglThemeManager::GetInstance().GetTheme(theme_name);
 
     // Create a timer to hide the preview image
@@ -925,18 +927,19 @@ void LcdDisplay::SetupUI() {
     lv_obj_align(status_label_, LV_ALIGN_CENTER, 0, 0);
 
 #if CONFIG_USE_MULTILINE_CHAT_MESSAGE
-    /* Bottom bar - auto height, grows upward with wrapped text */
+    /* Bottom bar - 固定两行高的"对话框":透明底 + 白边框 + 白字;超两行竖向滚动 */
     bottom_bar_ = lv_obj_create(screen);
     lv_obj_set_width(bottom_bar_, LV_HOR_RES - lvgl_theme->spacing(6));
-    lv_obj_set_height(bottom_bar_, LV_SIZE_CONTENT);
+    lv_obj_set_height(bottom_bar_, text_font->line_height * 2 + lvgl_theme->spacing(4) * 2);
     lv_obj_set_style_radius(bottom_bar_, lvgl_theme->spacing(5), 0);          // 圆角对话框
-    lv_obj_set_style_bg_opa(bottom_bar_, LV_OPA_TRANSP, 0);                   // 透明底
-    lv_obj_set_style_text_color(bottom_bar_, lv_color_white(), 0);            // 文字反色(白)
+    lv_obj_set_style_bg_opa(bottom_bar_, LV_OPA_TRANSP, 0);                   // 透明底(看着是黑的)
+    lv_obj_set_style_text_color(bottom_bar_, lv_color_white(), 0);            // 白字
     lv_obj_set_style_pad_all(bottom_bar_, lvgl_theme->spacing(4), 0);
-    lv_obj_set_style_border_width(bottom_bar_, 2, 0);                         // 对话框边框
+    lv_obj_set_style_border_width(bottom_bar_, 2, 0);                         // 白色对话框边框
     lv_obj_set_style_border_color(bottom_bar_, lv_color_white(), 0);
     lv_obj_set_style_border_opa(bottom_bar_, LV_OPA_COVER, 0);
     lv_obj_set_scrollbar_mode(bottom_bar_, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_scroll_dir(bottom_bar_, LV_DIR_VER);                           // 只竖向滚
     lv_obj_align(bottom_bar_, LV_ALIGN_BOTTOM_MID, 0, -lvgl_theme->spacing(2));
 
     /* chat_message_label_ placed in bottom_bar_, multiline wrapped display */
@@ -945,8 +948,8 @@ void LcdDisplay::SetupUI() {
     lv_obj_set_width(chat_message_label_, LV_HOR_RES - lvgl_theme->spacing(12));
     lv_label_set_long_mode(chat_message_label_, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_align(chat_message_label_, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_color(chat_message_label_, lv_color_white(), 0);    // 文字反色(白)
-    lv_obj_align(chat_message_label_, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_text_color(chat_message_label_, lv_color_white(), 0);    // 白字
+    lv_obj_align(chat_message_label_, LV_ALIGN_TOP_MID, 0, 0);                // 顶对齐,便于向下滚
     lv_obj_add_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);  // Hide until there is content
 #else
     /* Top layer: Bottom bar - fixed height at bottom */
@@ -1052,10 +1055,27 @@ void LcdDisplay::SetChatMessage(const char* role, const char* content) {
         }
     }
 #if CONFIG_USE_MULTILINE_CHAT_MESSAGE
-    // Re-align bottom_bar_ after text change so it stays anchored to the bottom
-    // as its height adapts to the wrapped content.
-    if (bottom_bar_ != nullptr) {
-        lv_obj_align(bottom_bar_, LV_ALIGN_BOTTOM_MID, 0, 0);
+    // 固定两行视窗:内容超过两行时,延时后从顶部缓慢向下滚动、循环,便于免手阅读。
+    if (bottom_bar_ != nullptr && chat_message_label_ != nullptr) {
+        lv_anim_delete(bottom_bar_, nullptr);                 // 停掉上一条消息的滚动
+        lv_obj_scroll_to_y(bottom_bar_, 0, LV_ANIM_OFF);
+        lv_obj_update_layout(bottom_bar_);
+        int32_t content_h = lv_obj_get_height(chat_message_label_);
+        int32_t view_h = lv_obj_get_content_height(bottom_bar_);
+        if (content_h > view_h) {
+            lv_anim_t a;
+            lv_anim_init(&a);
+            lv_anim_set_var(&a, bottom_bar_);
+            lv_anim_set_values(&a, 0, content_h - view_h);
+            lv_anim_set_duration(&a, (content_h - view_h) * 45);
+            lv_anim_set_delay(&a, 1200);
+            lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+            lv_anim_set_repeat_delay(&a, 1500);
+            lv_anim_set_exec_cb(&a, [](void* o, int32_t v) {
+                lv_obj_scroll_to_y(static_cast<lv_obj_t*>(o), v, LV_ANIM_OFF);
+            });
+            lv_anim_start(&a);
+        }
     }
 #endif
 }
