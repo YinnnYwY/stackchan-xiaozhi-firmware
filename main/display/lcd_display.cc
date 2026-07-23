@@ -944,8 +944,9 @@ void LcdDisplay::SetupUI() {
     lv_obj_set_style_text_color(user_text_label_, lv_color_white(), 0);
     lv_obj_set_style_text_opa(user_text_label_, LV_OPA_70, 0);            // 比气泡状态字稍淡,区分主次
     lv_label_set_text(user_text_label_, "");
-    // 气泡(24px 起,约 32px 高含边框留白)下面留出清楚的间隔
-    lv_obj_align(user_text_label_, LV_ALIGN_TOP_MID, 0, 58);
+    // "聆听中/思考中"等日常状态气泡平时是隐藏的(见 M5StackAvatarDisplay::SetStatus),
+    // 头顶通常只有这一行,所以直接紧跟图标行,不用给气泡预留位置。
+    lv_obj_align(user_text_label_, LV_ALIGN_TOP_MID, 0, 24);
     lv_obj_add_flag(user_text_label_, LV_OBJ_FLAG_HIDDEN);  // 没内容时不显示
 
 #if CONFIG_USE_MULTILINE_CHAT_MESSAGE

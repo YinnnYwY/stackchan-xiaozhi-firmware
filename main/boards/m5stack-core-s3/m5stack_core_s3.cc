@@ -165,8 +165,8 @@ public:
     void Pause(bool resume_scan = true) {
         if (!paused_) {
             paused_ = true;
-            tracking_ = false;
-            // 待机/结束对话时,别让"着急找人"的表情卡住。
+            // 睡眠/暂停时,别让"着急找人"或"注意到你"的表情卡住。
+            if (tracking_) { tracking_ = false; if (tracking_cb_) tracking_cb_(false); }
             if (searching_) { searching_ = false; if (search_cb_) search_cb_(false); }
             if (resume_scan) servo_->ResumeScan();
             ESP_LOGI("FaceTrack", "Paused (scan=%d)", resume_scan);
@@ -200,6 +200,9 @@ public:
 
     // 找不到人、持续一段时间后开始"着急找"(true)/重新找到或暂停时结束(false)
     void SetSearchingCallback(std::function<void(bool)> cb) { search_cb_ = std::move(cb); }
+
+    // 真的在跟踪明确动静时(true)/停止跟踪时(false)——让"她在动"始终配一个表情理由
+    void SetTrackingCallback(std::function<void(bool)> cb) { tracking_cb_ = std::move(cb); }
 
     bool IsPaused() const { return paused_; }
     float GetYaw() const { return yaw_; }
@@ -239,7 +242,7 @@ private:
                     uint8_t brightness = cur_frame[idx];
                     if (brightness > 200) continue;
                     int diff = abs((int)cur_frame[idx] - (int)prev_frame_[idx]);
-                    if (diff > 20) {
+                    if (diff > 28) {                        // 提高单像素判定门槛,滤掉传感器噪点
                         sum_x += dx;
                         sum_y += dy;
                         count++;
@@ -253,15 +256,17 @@ private:
         if (!ok) return;
 
         int total_pixels = (DS_W - 2) * (DS_H - 4);
-        if (count < 3 || count > total_pixels / 3) {
+        // 之前 count<3 太敏感——一两个噪点像素就判定"有动静",导致主人没动
+        // 她却在动。提高到 count<16(约 1.6% 画面),要求更明确的动作才跟踪。
+        if (count < 16 || count > total_pixels / 3) {
             no_move_count_++;
             if (no_move_count_ > 6 && tracking_) {
                 tracking_ = false;
+                if (tracking_cb_) tracking_cb_(false);   // 停止跟踪:收回"注意到你"的表情
             }
-            // 找不到人:先等一会儿(约 3s,避免"安静坐着说话"就被误判成不见了),
-            // 还是没动静就开始"着急找人"——眼睛(和舵机,若有)慢慢左右扫,
-            // 表情切成 Confused(带"?")。
-            const int kSearchStartCycles = 30;  // TaskFunc 每 100ms 跑一次 → ~3s
+            // 找不到人:先等一会儿再"着急找"——常驻追踪下拉长到约 10s,
+            // 避免主人只是安静坐一会儿就被当成"不见了"一直着急扫视。
+            const int kSearchStartCycles = 100;  // TaskFunc 每 100ms 跑一次 → ~10s
             if (no_move_count_ == kSearchStartCycles) {
                 searching_ = true;
                 search_phase_ = 0;
@@ -288,6 +293,7 @@ private:
         if (!tracking_) {
             servo_->PauseScan();
             tracking_ = true;
+            if (tracking_cb_) tracking_cb_(true);   // 开始跟踪真实动静:亮出"注意到你"的表情
         }
 
         float cx = (float)sum_x / count;
@@ -329,6 +335,7 @@ private:
     bool searching_ = false;
     int search_phase_ = 0;
     std::function<void(bool)> search_cb_;
+    std::function<void(bool)> tracking_cb_;
 };
 
 // ── 闹钟系统:本地存储(NVS)+ 本地计时(不依赖云端推送)──────────────
@@ -701,6 +708,10 @@ public:
     // 闭眼 + zzz,同样只借用显示,不动 expression_ 本身。
     void SetSleeping(bool s) { sleeping_ = s; }
 
+    // 正在跟踪真实动静时(true)/停止时(false):睁大眼睛表示"注意到你了",
+    // 让"她在动"这件事总有个看得出来的理由,不是无缘无故动。
+    void SetAttentive(bool a) { attentive_ = a; }
+
 private:
     static void TimerCb(lv_timer_t* t) {
         static_cast<LvglAvatar*>(lv_timer_get_user_data(t))->OnTick();
@@ -821,9 +832,9 @@ private:
         int bob = (int)(breath_ * 3.0f);                            // 呼吸:轻微上下浮
         if (mouth_open_ > 0.05f) bob -= (int)(mouth_open_ * 3.0f);   // 说话时轻轻上跳(无嘴,靠身体动)
 
-        // 睡眠/找不到人时,这一帧临时借用对应表情,只改这一帧的显示,不动
-        // expression_/overlay_ 本身——状态结束就自动恢复 LLM 设的正常表情。
-        // 睡眠优先级更高(两者理论上不会同时发生,追踪在睡眠时是暂停的)。
+        // 睡眠/找不到人/正在跟踪时,这一帧临时借用对应表情,只改这一帧的显示,
+        // 不动 expression_/overlay_ 本身——状态结束就自动恢复 LLM 设的正常表情。
+        // 优先级:睡眠 > 着急找人 > 注意到你(三者互斥,追踪在睡眠/搜索时不会同时发生)。
         Expression saved_expr = expression_;
         Overlay saved_overlay = overlay_;
         if (sleeping_) {
@@ -832,6 +843,8 @@ private:
         } else if (searching_) {
             expression_ = Expression::Confused;
             overlay_.question_mark = true;
+        } else if (attentive_) {
+            expression_ = Expression::Surprised;   // 睁大眼睛="注意到你在动了"
         }
 
         DrawBody(&layer, bob);
@@ -1114,6 +1127,7 @@ private:
     uint32_t gaze_ext_ms_ = 0;   // 上次外部(摄像头追踪)设视线的时间,期间暂停随机扫视
     bool searching_ = false;    // 找不到人,正在"着急找"(临时借用表情,见 Draw())
     bool sleeping_ = false;     // 明确进入睡眠(self.sleep.rest,临时借用表情,见 Draw())
+    bool attentive_ = false;    // 正在跟踪真实动静(临时借用表情,见 Draw())
 
     float breath_amp_ = 3.0f;
     uint32_t breath_period_steps_ = 100;
@@ -1207,6 +1221,11 @@ public:
     void SetSleeping(bool s) {
         DisplayLockGuard lock(this);
         if (avatar_.IsReady()) avatar_.SetSleeping(s);
+    }
+    // 正在跟踪真实动静(true)/停止(false)——让"她在动"总有个看得出来的表情理由
+    void SetAttentive(bool a) {
+        DisplayLockGuard lock(this);
+        if (avatar_.IsReady()) avatar_.SetAttentive(a);
     }
     void SetServo(StackChanServo* s) { servo_ = s; }
     void SetLedUpdater(std::function<void(const char*)> fn) { led_updater_ = std::move(fn); }
@@ -1303,6 +1322,15 @@ public:
                        || strstr(status, "Speaking")
                        || strstr(status, "Thinking")
                        || strstr(status, "Connecting"));
+        // "聆听中/思考中/说话中"这类日常对话状态不再显示在头顶(主人反馈不需要)。
+        // 其它状态(WiFi 设置提示、报错、激活码等)照常显示,这些是真正有用的信息。
+        if (status_bar_) {
+            if (is_active) {
+                lv_obj_add_flag(status_bar_, LV_OBJ_FLAG_HIDDEN);
+            } else {
+                lv_obj_remove_flag(status_bar_, LV_OBJ_FLAG_HIDDEN);
+            }
+        }
         if (is_active) {
             SetActiveLocked(true);
             BumpIdleTimerLocked();
@@ -2552,6 +2580,9 @@ public:
             });
             face_tracker_.SetSearchingCallback([avatar_display](bool s) {
                 avatar_display->SetSearching(s);
+            });
+            face_tracker_.SetTrackingCallback([avatar_display](bool a) {
+                avatar_display->SetAttentive(a);
             });
             // 追踪默认全天常驻开启("一直醒着"),不再等第一次对话才启动;
             // 只有明确"睡眠"(self.sleep.rest)才会暂停。
