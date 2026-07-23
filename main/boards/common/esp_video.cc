@@ -793,6 +793,28 @@ bool EspVideo::SetVFlip(bool enabled) {
  * @note 函数会等待之前的编码线程完成后再开始新的处理
  * @warning 如果摄像头缓冲区为空或网络连接失败，将返回错误信息
  */
+bool EspVideo::CaptureJpeg(std::vector<uint8_t>& out_jpeg) {
+    if (!frame_.data) return false;
+    out_jpeg.clear();
+    uint16_t w = frame_.width ? frame_.width : 320;
+    uint16_t h = frame_.height ? frame_.height : 240;
+    v4l2_pix_fmt_t enc_fmt = frame_.format;
+    // 同步单次编码,直接攒进一个 vector——不像 Explain() 那样要一边编码一边流式
+    // chunked POST 给云端,这里在本地 HTTP handler 里跑,编完一次性发出去即可。
+    bool ok = image_to_jpeg_cb(
+        frame_.data, frame_.len, w, h, enc_fmt, 80,
+        [](void* arg, size_t /*index*/, const void* data, size_t len) -> size_t {
+            auto* out = static_cast<std::vector<uint8_t>*>(arg);
+            if (data != nullptr && len > 0) {
+                const uint8_t* bytes = static_cast<const uint8_t*>(data);
+                out->insert(out->end(), bytes, bytes + len);
+            }
+            return len;
+        },
+        &out_jpeg);
+    return ok && !out_jpeg.empty();
+}
+
 std::string EspVideo::Explain(const std::string& question) {
     if (explain_url_.empty()) {
         throw std::runtime_error("Image explain URL or token is not set");

@@ -24,6 +24,7 @@
 #include <vector>
 #include <functional>
 #include <cJSON.h>
+#include <esp_http_server.h>
 #include "esp_video.h"
 #include "lvgl.h"
 #include "SCSCL.h"
@@ -1593,6 +1594,107 @@ static std::string ClassifyActivityLabel(const std::string& raw) {
     return "其他";
 }
 
+// ── 局域网视觉/舵机 HTTP 接口:给 Mac 端跑 MediaPipe 人脸追踪用 ──────────
+// 本地这套像素差分追踪(FaceTracker)精度有限,这里把摄像头+舵机暴露成
+// 简单的 HTTP 接口,Mac 上跑更准的人脸检测,轮询 /camera 拿照片、算出
+// 人脸位置后调 /servo 转头——参考 zziying/stackchan-openapi 的思路,但
+// 和现有的 xiaozhi 语音通道并存,不是替换关系。
+// 没有鉴权:同一局域网内任何设备都能拍照/转头,家庭内网场景先这样,
+// 之后如果需要可以加一个简单的 token 校验。
+class LocalVisionServer {
+public:
+    bool Start(EspVideo* camera, StackChanServo* servo, FaceTracker* tracker, int port = 8090) {
+        camera_ = camera; servo_ = servo; tracker_ = tracker;
+        httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+        config.server_port = port;
+        config.stack_size = 8192;       // JPEG 编码需要较大栈
+        config.lru_purge_enable = true;
+        if (httpd_start(&server_, &config) != ESP_OK) {
+            ESP_LOGE("VisionSrv", "Failed to start on port %d", port);
+            return false;
+        }
+        httpd_uri_t camera_uri = {"/camera", HTTP_GET, HandleCamera, this};
+        httpd_uri_t servo_uri  = {"/servo",  HTTP_GET, HandleServo,  this};
+        httpd_uri_t status_uri = {"/status", HTTP_GET, HandleStatus, this};
+        httpd_register_uri_handler(server_, &camera_uri);
+        httpd_register_uri_handler(server_, &servo_uri);
+        httpd_register_uri_handler(server_, &status_uri);
+        ESP_LOGI("VisionSrv", "Local vision/servo HTTP server on :%d (/camera /servo /status)", port);
+        return true;
+    }
+
+private:
+    static esp_err_t HandleCamera(httpd_req_t* req) {
+        return static_cast<LocalVisionServer*>(req->user_ctx)->DoCamera(req);
+    }
+    esp_err_t DoCamera(httpd_req_t* req) {
+        if (!camera_ || !camera_->IsOk()) {
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "camera not ready");
+            return ESP_FAIL;
+        }
+        if (!camera_->Capture()) {
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "capture failed");
+            return ESP_FAIL;
+        }
+        std::vector<uint8_t> jpeg;
+        if (!camera_->CaptureJpeg(jpeg)) {
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "jpeg encode failed");
+            return ESP_FAIL;
+        }
+        httpd_resp_set_type(req, "image/jpeg");
+        httpd_resp_send(req, reinterpret_cast<const char*>(jpeg.data()), jpeg.size());
+        return ESP_OK;
+    }
+
+    static esp_err_t HandleServo(httpd_req_t* req) {
+        return static_cast<LocalVisionServer*>(req->user_ctx)->DoServo(req);
+    }
+    esp_err_t DoServo(httpd_req_t* req) {
+        char query[128];
+        int yaw = 0, pitch = 30;
+        bool has_any = false;
+        if (httpd_req_get_url_query_len(req) > 0 &&
+            httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+            char val[16];
+            if (httpd_query_key_value(query, "yaw", val, sizeof(val)) == ESP_OK) {
+                yaw = atoi(val); has_any = true;
+            }
+            if (httpd_query_key_value(query, "pitch", val, sizeof(val)) == ESP_OK) {
+                pitch = atoi(val); has_any = true;
+            }
+        }
+        if (!has_any) {
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "need yaw and/or pitch query params");
+            return ESP_FAIL;
+        }
+        // Mac 端接管转头时,锁住+暂停本地反射追踪,避免两边抢舵机。
+        // 解锁沿用现有机制:下一轮真实对话开始(Listening/Speaking)会自动
+        // SetManualLock(false) 恢复本地追踪,不需要 Mac 端主动"归还"。
+        if (tracker_) { tracker_->SetManualLock(true); tracker_->Pause(false); }
+        if (servo_) servo_->MoveTo(yaw, pitch, 200);
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_sendstr(req, "{\"ok\":true}");
+        return ESP_OK;
+    }
+
+    static esp_err_t HandleStatus(httpd_req_t* req) {
+        return static_cast<LocalVisionServer*>(req->user_ctx)->DoStatus(req);
+    }
+    esp_err_t DoStatus(httpd_req_t* req) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "{\"camera_ok\":%s}",
+                 (camera_ && camera_->IsOk()) ? "true" : "false");
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_sendstr(req, buf);
+        return ESP_OK;
+    }
+
+    httpd_handle_t server_ = nullptr;
+    EspVideo* camera_ = nullptr;
+    StackChanServo* servo_ = nullptr;
+    FaceTracker* tracker_ = nullptr;
+};
+
 class M5StackCoreS3Board : public WifiBoard {
 private:
     i2c_master_bus_handle_t i2c_bus_;
@@ -1626,6 +1728,7 @@ private:
     AlarmManager alarm_mgr_;
     esp_timer_handle_t alarm_timer_ = nullptr;
     esp_timer_handle_t activity_timer_ = nullptr;
+    LocalVisionServer vision_server_;
 
     void InitializeBmi270() {
         // BMI270 实际在 0x69（不是 SDK 默认的 0x68），自己用 IDF i2c API + 底层 bmi270_init 绕过硬编码
@@ -2720,9 +2823,11 @@ public:
             face_tracker_.SetTrackingCallback([avatar_display](bool a) {
                 avatar_display->SetAttentive(a);
             });
-            // 追踪默认全天常驻开启("一直醒着"),不再等第一次对话才启动;
-            // 只有明确"睡眠"(self.sleep.rest)才会暂停。
+            // 对话中恢复追踪、待机自动暂停,见 SetStatus 的
+            // kDeviceStateListening/Speaking 和 kDeviceStateIdle 分支。
             face_tracker_.Resume();
+            // 局域网 HTTP 接口(/camera /servo),给 Mac 端 MediaPipe 人脸追踪用。
+            vision_server_.Start(camera_, &servo_, &face_tracker_);
         }
         avatar_display->SetLedUpdater([this](const char* emotion) {
             UpdateLedsFromEmotion(emotion);

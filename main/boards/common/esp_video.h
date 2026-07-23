@@ -74,4 +74,5 @@ public:
     virtual bool SetHMirror(bool enabled) override;
     virtual bool SetVFlip(bool enabled) override;
     virtual std::string Explain(const std::string& question);
+    virtual bool CaptureJpeg(std::vector<uint8_t>& out_jpeg) override;
 };
