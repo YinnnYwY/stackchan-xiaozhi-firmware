@@ -2193,6 +2193,30 @@ private:
             });
     }
 
+    // 内心 OS:她不是什么都要说出来的性格。这个工具让 LLM 在屏幕上留一句
+    // 悄悄话,完全不经过 TTS/语音(纯 MCP 工具调用,和"说话"是两条不同的
+    // 通道),所以不会被念出来。显示样式见 LcdDisplay::SetChatMessage 的
+    // role=="thought" 分支(同一个底部气泡,边框变淡,和"实线"说话区分开)。
+    void RegisterMindMcpTools() {
+        auto& mcp = McpServer::GetInstance();
+        mcp.AddTool("self.mind.think",
+            "Show a short INNER THOUGHT on screen WITHOUT saying it out loud — completely "
+            "silent, no speech/audio at all (this tool is NOT connected to TTS). Use this when "
+            "you want to react to something but your personality is not to say everything out "
+            "loud — some things she just quietly thinks. Shown in a faint/dashed box, distinct "
+            "from what she actually says. Do NOT use this instead of answering a direct "
+            "question — only for internal reactions/asides you choose not to voice.",
+            PropertyList({
+                Property("text", kPropertyTypeString),
+            }),
+            [this](const PropertyList& props) -> ReturnValue {
+                std::string text = props["text"].value<std::string>();
+                if (auto* disp = GetDisplay()) disp->SetChatMessage("thought", text.c_str());
+                ESP_LOGI(TAG, "MCP mind.think: %s", text.c_str());
+                return true;
+            });
+    }
+
     // 定时活动记录:拍一张照片问云端"在做什么",匹配成固定短标签后通过
     // SendUserText 那条 canned-message 通道转给云端(24 字节上限,所以只能
     // 传一个短标签,不是完整描述)。云端那边(小小克的角色 prompt)要负责把
@@ -2743,6 +2767,7 @@ public:
         alarm_mgr_.Load();
         RegisterAlarmMcpTools();
         RegisterSleepMcpTools();
+        RegisterMindMcpTools();
 
         esp_timer_create_args_t alarm_args = {};
         alarm_args.callback = [](void* arg) {

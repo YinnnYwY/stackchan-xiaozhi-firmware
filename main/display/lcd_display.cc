@@ -1088,6 +1088,13 @@ void LcdDisplay::SetChatMessage(const char* role, const char* content) {
         }
         return;
     }
+    // "thought" 角色 = 内心 OS(self.mind.think,不经过 TTS,完全不出声)——
+    // 复用同一个底部气泡,只是边框变淡,和真正"说出来的话"(实线满边框)
+    // 区分开。LVGL 原生没有虚线边框样式,这里用透明度模拟"虚"的感觉。
+    if (bottom_bar_ != nullptr) {
+        bool is_thought = role && strcmp(role, "thought") == 0;
+        lv_obj_set_style_border_opa(bottom_bar_, is_thought ? LV_OPA_30 : LV_OPA_COVER, 0);
+    }
     lv_label_set_text(chat_message_label_, content);
     // Show bottom_bar_ only when there is content (and subtitle is not globally hidden)
     if (bottom_bar_ != nullptr) {

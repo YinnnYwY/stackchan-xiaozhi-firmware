@@ -92,6 +92,10 @@ bool CustomWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) 
 #ifdef CONFIG_CUSTOM_WAKE_WORD
         commands_.push_back({CONFIG_CUSTOM_WAKE_WORD, CONFIG_CUSTOM_WAKE_WORD_DISPLAY, "wake"});
 #endif
+        // 她的名字是"小小克"(不是"小克")——之前配的唤醒词少了一个"小",导致
+        // 主人喊"你好小小克"/"hi小小克"总是对不上。这里额外加一个更短的
+        // "小小克"(不带"你好")做备用,两种叫法都认。
+        commands_.push_back({"xiao xiao ke", "小小克", "wake"});
     } else {
         models_ = models_list;
         ParseWakenetModelConfig();
