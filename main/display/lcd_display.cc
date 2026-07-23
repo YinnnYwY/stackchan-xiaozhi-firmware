@@ -897,21 +897,30 @@ void LcdDisplay::SetupUI() {
     lv_obj_set_style_text_color(battery_label_, lv_color_white(), 0);
     lv_obj_set_style_margin_left(battery_label_, lvgl_theme->spacing(2), 0);
 
-    /* Layer 2: Status bar - for center text labels */
+    /* Layer 2: Status bar - "思考中"等状态,做成云朵气泡的样子(圆角+细边框),
+       和 top_bar_ 图标行分开,给下面新的"你说的话"区域让出空间 */
     status_bar_ = lv_obj_create(screen);
-    lv_obj_set_size(status_bar_, LV_HOR_RES, LV_SIZE_CONTENT);
-    lv_obj_set_style_radius(status_bar_, 0, 0);
-    lv_obj_set_style_bg_opa(status_bar_, LV_OPA_TRANSP, 0);  // Transparent background
-    lv_obj_set_style_border_width(status_bar_, 0, 0);
+    lv_obj_set_width(status_bar_, LV_HOR_RES * 0.7);
+    lv_obj_set_height(status_bar_, LV_SIZE_CONTENT);
+    lv_obj_set_style_radius(status_bar_, lvgl_theme->spacing(4), 0);      // 圆角气泡
+    lv_obj_set_style_bg_opa(status_bar_, LV_OPA_20, 0);                  // 淡淡的底,像云朵
+    lv_obj_set_style_bg_color(status_bar_, lv_color_white(), 0);
+    lv_obj_set_style_border_width(status_bar_, 1, 0);
+    lv_obj_set_style_border_color(status_bar_, lv_color_white(), 0);
+    lv_obj_set_style_border_opa(status_bar_, LV_OPA_50, 0);
     lv_obj_set_style_pad_all(status_bar_, 0, 0);
     lv_obj_set_style_pad_top(status_bar_, lvgl_theme->spacing(2), 0);
     lv_obj_set_style_pad_bottom(status_bar_, lvgl_theme->spacing(2), 0);
+    lv_obj_set_style_pad_left(status_bar_, lvgl_theme->spacing(3), 0);
+    lv_obj_set_style_pad_right(status_bar_, lvgl_theme->spacing(3), 0);
     lv_obj_set_scrollbar_mode(status_bar_, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_style_layout(status_bar_, LV_LAYOUT_NONE, 0);  // Use absolute positioning
-    lv_obj_align(status_bar_, LV_ALIGN_TOP_MID, 0, 0);  // Overlap with top_bar_
+    lv_obj_set_style_layout(status_bar_, LV_LAYOUT_NONE, 0);
+    // 用固定像素而非 theme->spacing()(基础单位只有 2px,太小分不开图标行):
+    // 图标行大约 20px 高,气泡从 24px 处开始,清楚地让到图标行下面。
+    lv_obj_align(status_bar_, LV_ALIGN_TOP_MID, 0, 24);
 
     notification_label_ = lv_label_create(status_bar_);
-    lv_obj_set_width(notification_label_, LV_HOR_RES * 0.75);
+    lv_obj_set_width(notification_label_, LV_HOR_RES * 0.7 - lvgl_theme->spacing(6));
     lv_obj_set_style_text_align(notification_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_color(notification_label_, lv_color_white(), 0);
     lv_label_set_text(notification_label_, "");
@@ -919,12 +928,25 @@ void LcdDisplay::SetupUI() {
     lv_obj_add_flag(notification_label_, LV_OBJ_FLAG_HIDDEN);
 
     status_label_ = lv_label_create(status_bar_);
-    lv_obj_set_width(status_label_, LV_HOR_RES * 0.75);
+    lv_obj_set_width(status_label_, LV_HOR_RES * 0.7 - lvgl_theme->spacing(6));
     lv_label_set_long_mode(status_label_, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_align(status_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_color(status_label_, lv_color_white(), 0);
     lv_label_set_text(status_label_, Lang::Strings::INITIALIZING);
     lv_obj_align(status_label_, LV_ALIGN_CENTER, 0, 0);
+
+    /* 新增:主人说的话(语音转文字结果)——放在气泡下面,方便发现"她听错了什么" */
+    user_text_label_ = lv_label_create(screen);
+    lv_obj_set_width(user_text_label_, LV_HOR_RES - lvgl_theme->spacing(16));
+    lv_obj_set_height(user_text_label_, text_font->line_height);
+    lv_label_set_long_mode(user_text_label_, LV_LABEL_LONG_DOT);          // 一行,超出显示省略号
+    lv_obj_set_style_text_align(user_text_label_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(user_text_label_, lv_color_white(), 0);
+    lv_obj_set_style_text_opa(user_text_label_, LV_OPA_70, 0);            // 比气泡状态字稍淡,区分主次
+    lv_label_set_text(user_text_label_, "");
+    // 气泡(24px 起,约 32px 高含边框留白)下面留出清楚的间隔
+    lv_obj_align(user_text_label_, LV_ALIGN_TOP_MID, 0, 58);
+    lv_obj_add_flag(user_text_label_, LV_OBJ_FLAG_HIDDEN);  // 没内容时不显示
 
 #if CONFIG_USE_MULTILINE_CHAT_MESSAGE
     /* Bottom bar - 固定两行高的"对话框":透明底 + 白边框 + 白字;超两行竖向滚动 */
@@ -1039,6 +1061,26 @@ void LcdDisplay::SetChatMessage(const char* role, const char* content) {
         ESP_LOGW(TAG, "SetChatMessage('%s', '%s') called before SetupUI() - message will be lost!", role, content);
     }
     DisplayLockGuard lock(this);
+
+    // "user" 角色 = 语音转文字识别出的、主人自己说的话——单独放顶部那一行,
+    // 不再和下面小小克自己说的话共用同一个标签(以前是共用的,会被立刻覆盖掉)。
+    if (role && strcmp(role, "user") == 0) {
+        if (user_text_label_ != nullptr) {
+            lv_label_set_text(user_text_label_, content ? content : "");
+            if (content == nullptr || content[0] == '\0') {
+                lv_obj_add_flag(user_text_label_, LV_OBJ_FLAG_HIDDEN);
+            } else if (!hide_subtitle_) {
+                lv_obj_remove_flag(user_text_label_, LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+        return;
+    }
+    // 一轮对话真正结束时(比如断开音频通道后的空消息清屏),顶部的"你说的话"也一起清掉。
+    if ((content == nullptr || content[0] == '\0') && user_text_label_ != nullptr) {
+        lv_label_set_text(user_text_label_, "");
+        lv_obj_add_flag(user_text_label_, LV_OBJ_FLAG_HIDDEN);
+    }
+
     if (chat_message_label_ == nullptr) {
         if (setup_ui_called_) {
             ESP_LOGW(TAG, "SetChatMessage('%s', '%s') failed: chat_message_label_ is nullptr (SetupUI() was called but label not created)", role, content);
@@ -1088,6 +1130,10 @@ void LcdDisplay::ClearChatMessages() {
     }
     if (bottom_bar_ != nullptr) {
         lv_obj_add_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (user_text_label_ != nullptr) {
+        lv_label_set_text(user_text_label_, "");
+        lv_obj_add_flag(user_text_label_, LV_OBJ_FLAG_HIDDEN);
     }
 }
 #endif

@@ -373,6 +373,10 @@ public:
         next_id_ = 1;
         for (auto& a : alarms_) if (a.id >= next_id_) next_id_ = a.id + 1;
         ESP_LOGI("Alarm", "Loaded %d alarm(s)", (int)alarms_.size());
+        for (auto& a : alarms_) {
+            ESP_LOGI("Alarm", "  #%d %02d:%02d wd=0x%02x en=%d label=%s",
+                     a.id, a.hour, a.minute, a.weekday_mask, a.enabled, a.label.c_str());
+        }
     }
 
     void Save() {
@@ -412,12 +416,26 @@ public:
         return false;
     }
 
+    // 带上"现在几点"——之前主人问"为什么没提醒"时,LLM 没有任何办法核实当前时间,
+    // 只能瞎猜(比如说"还没到4:30"却可能压根不对)。现在她查闹钟列表时能顺带看到
+    // 设备自己认为的当前时间,回答才有依据。
     std::string ListText() const {
-        if (alarms_.empty()) return "当前没有设置任何闹钟";
-        std::string s;
+        char now_buf[64];
+        time_t now = time(nullptr);
+        struct tm tmv;
+        localtime_r(&now, &tmv);
+        if (tmv.tm_year < 2025 - 1900) {
+            snprintf(now_buf, sizeof(now_buf), "(设备当前时间还没同步,可能不准)");
+        } else {
+            static const char* wd[7] = {"日", "一", "二", "三", "四", "五", "六"};
+            snprintf(now_buf, sizeof(now_buf), "现在是 %02d:%02d(周%s)。",
+                     tmv.tm_hour, tmv.tm_min, wd[tmv.tm_wday]);
+        }
+        std::string s = now_buf;
+        if (alarms_.empty()) { s += "当前没有设置任何闹钟"; return s; }
         for (auto& a : alarms_) {
             char buf[96];
-            snprintf(buf, sizeof(buf), "#%d %02d:%02d %s%s%s%s；",
+            snprintf(buf, sizeof(buf), " #%d %02d:%02d %s%s%s%s；",
                      a.id, a.hour, a.minute, WeekdayMaskText(a.weekday_mask).c_str(),
                      a.label.empty() ? "" : " ", a.label.c_str(),
                      a.enabled ? "" : "(已关闭)");
@@ -432,7 +450,12 @@ public:
         time_t now = time(nullptr);
         struct tm tmv;
         localtime_r(&now, &tmv);
-        if (tmv.tm_year < 2025 - 1900) return;  // 系统时间还没同步(未做过 OTA 检查),别误触发
+        if (tmv.tm_year < 2025 - 1900) {
+            ESP_LOGW("Alarm", "System time not synced yet (tm_year=%d), skip check", tmv.tm_year + 1900);
+            return;  // 系统时间还没同步(未做过 OTA 检查),别误触发
+        }
+        // 每次检查都打一条当前时间日志(低频、20s 一次,方便日后排查"到点没响"问题)
+        ESP_LOGI("Alarm", "Check tick: now=%02d:%02d wd=%d", tmv.tm_hour, tmv.tm_min, tmv.tm_wday);
         int32_t ymd = (tmv.tm_year + 1900) * 10000 + (tmv.tm_mon + 1) * 100 + tmv.tm_mday;
         bool changed = false;
         for (auto& a : alarms_) {
@@ -674,6 +697,10 @@ public:
     // 只借用 Draw() 那一帧的表情显示,不改 expression_ 本身——LLM 的正常表情不会被打乱。
     void SetSearching(bool s) { searching_ = s; }
 
+    // 明确进入/退出"睡眠"(self.sleep.* 工具触发,不再随 Idle 自动睡):
+    // 闭眼 + zzz,同样只借用显示,不动 expression_ 本身。
+    void SetSleeping(bool s) { sleeping_ = s; }
+
 private:
     static void TimerCb(lv_timer_t* t) {
         static_cast<LvglAvatar*>(lv_timer_get_user_data(t))->OnTick();
@@ -794,12 +821,15 @@ private:
         int bob = (int)(breath_ * 3.0f);                            // 呼吸:轻微上下浮
         if (mouth_open_ > 0.05f) bob -= (int)(mouth_open_ * 3.0f);   // 说话时轻轻上跳(无嘴,靠身体动)
 
-        // 找不到人时,这一帧临时借用 Confused 眼型 + "?" 标记表达"着急找你",
-        // 只改这一帧的显示,不动 expression_/overlay_ 本身——搜索一结束就自动
-        // 恢复 LLM 设的正常表情,不会被打乱状态。
+        // 睡眠/找不到人时,这一帧临时借用对应表情,只改这一帧的显示,不动
+        // expression_/overlay_ 本身——状态结束就自动恢复 LLM 设的正常表情。
+        // 睡眠优先级更高(两者理论上不会同时发生,追踪在睡眠时是暂停的)。
         Expression saved_expr = expression_;
         Overlay saved_overlay = overlay_;
-        if (searching_) {
+        if (sleeping_) {
+            expression_ = Expression::Sleepy;
+            overlay_.zzz = true;
+        } else if (searching_) {
             expression_ = Expression::Confused;
             overlay_.question_mark = true;
         }
@@ -1083,6 +1113,7 @@ private:
     float gaze_v_ = 0.0f;
     uint32_t gaze_ext_ms_ = 0;   // 上次外部(摄像头追踪)设视线的时间,期间暂停随机扫视
     bool searching_ = false;    // 找不到人,正在"着急找"(临时借用表情,见 Draw())
+    bool sleeping_ = false;     // 明确进入睡眠(self.sleep.rest,临时借用表情,见 Draw())
 
     float breath_amp_ = 3.0f;
     uint32_t breath_period_steps_ = 100;
@@ -1172,6 +1203,11 @@ public:
         DisplayLockGuard lock(this);
         if (avatar_.IsReady()) avatar_.SetSearching(s);
     }
+    // 明确进入(true)/退出(false)睡眠——self.sleep.* 工具或新一轮对话开始时调用
+    void SetSleeping(bool s) {
+        DisplayLockGuard lock(this);
+        if (avatar_.IsReady()) avatar_.SetSleeping(s);
+    }
     void SetServo(StackChanServo* s) { servo_ = s; }
     void SetLedUpdater(std::function<void(const char*)> fn) { led_updater_ = std::move(fn); }
 
@@ -1249,12 +1285,15 @@ public:
         if (!status || !avatar_.IsReady()) return;
         DisplayLockGuard lock(this);
         auto state = Application::GetInstance().GetDeviceState();
+        // 追踪常驻开启(不再随 Idle 自动暂停)——只有明确"睡眠"才停,见 self.sleep.*。
+        // 开始新一轮对话 = 确定"醒着":顺带解除手动锁(避免用户曾用 head.move
+        // 转头后忘了 head.center 导致追踪永久失效)、清掉睡眠视觉、恢复追踪。
         if (state == kDeviceStateListening || state == kDeviceStateSpeaking) {
-            if (face_tracker_) face_tracker_->Resume();
-        } else if (state == kDeviceStateIdle) {
-            // 待机时顺带解除手动锁:避免用户曾用 head.move 转头后,
-            // 忘了 head.center,导致下次唤醒追踪永久失效。
-            if (face_tracker_) { face_tracker_->SetManualLock(false); face_tracker_->Pause(); }
+            if (face_tracker_) {
+                face_tracker_->SetManualLock(false);
+                face_tracker_->Resume();
+            }
+            SetSleeping(false);
         }
         bool is_active = (strstr(status, "聆听")
                        || strstr(status, "说话")
@@ -1962,8 +2001,16 @@ private:
             "Set an alarm/reminder that fires at a specific local time (device clock is "
             "already synced, no need to ask the user for the date). Use when the user asks "
             "to be reminded or woken up at a time, e.g. '明天早上7点叫我起床', '每天7点提醒我喝水'. "
-            "hour/minute are 24-hour local time. repeat: 'once' (default — fires once then "
-            "auto-disables), 'daily', 'weekdays' (Mon-Fri), or 'weekends' (Sat/Sun). "
+            "hour/minute are STRICT 24-HOUR local time — this is a common source of mistakes, "
+            "be careful: '4点半'/'4:30' spoken WITHOUT 上午/下午/早上/晚上 is AMBIGUOUS — if the "
+            "user says 下午/晚上 (afternoon/evening) or the context implies daytime-not-morning, "
+            "convert to 24h (下午4点30分 -> hour=16, minute=30), NOT hour=4. If truly ambiguous, "
+            "ask the user to clarify AM or PM before calling this tool. "
+            "IMPORTANT: after calling this tool, ALWAYS read the exact time back to the user in "
+            "your spoken reply using 12-hour wording with 上午/下午 (e.g. '好的，下午4点30分叫你'), "
+            "so a misunderstanding is caught immediately instead of silently failing later. "
+            "repeat: 'once' (default — fires once then auto-disables), 'daily', 'weekdays' "
+            "(Mon-Fri), or 'weekends' (Sat/Sun). "
             "label is a VERY SHORT reason spoken back when it fires (e.g. '起床', '开会', '喝水') "
             "— keep it to just a few characters, longer labels get truncated.",
             PropertyList({
@@ -1988,7 +2035,10 @@ private:
 
         mcp.AddTool("self.alarm.list",
             "List all currently set alarms/reminders with their id, time, repeat pattern and label. "
-            "Use this first if the user wants to cancel one but doesn't give an id.",
+            "The result also starts with the device's own current time. "
+            "Use this first if the user wants to cancel one but doesn't give an id, AND whenever "
+            "the user asks something like 'why didn't my alarm go off' / '现在几点了' / 'X点了吗' — "
+            "call this tool and read the ACTUAL current time back, never guess or assume.",
             PropertyList(),
             [this](const PropertyList&) -> ReturnValue {
                 return alarm_mgr_.ListText();
@@ -2004,6 +2054,40 @@ private:
                 bool ok = alarm_mgr_.Cancel(id);
                 ESP_LOGI(TAG, "MCP alarm.cancel: id=%d ok=%d", id, ok);
                 return ok ? std::string("已取消") : std::string("没找到这个闹钟编号");
+            });
+    }
+
+    // 睡眠:明确的语音开关。追踪默认全天常驻开启(不再随 Idle 自动暂停),
+    // 只有这里显式暂停;下一轮对话开始(唤醒/触摸)会自动醒来,见 SetStatus。
+    void RegisterSleepMcpTools() {
+        auto& mcp = McpServer::GetInstance();
+
+        mcp.AddTool("self.sleep.rest",
+            "Put her to sleep/rest: closes her eyes, pauses camera tracking to save power. "
+            "ONLY call this when the user EXPLICITLY tells her to sleep/rest/close her eyes "
+            "(e.g. '睡觉了'/'晚安'/'闭上眼睛休息一下'). Do NOT call this just because the "
+            "conversation is ending or going idle — she should stay 'awake' (tracking/aware) "
+            "all day by default; only an explicit sleep request should trigger this. "
+            "She automatically wakes up again the next time a conversation starts.",
+            PropertyList(),
+            [this](const PropertyList&) -> ReturnValue {
+                face_tracker_.Pause();
+                if (auto* disp = static_cast<M5StackAvatarDisplay*>(GetDisplay())) disp->SetSleeping(true);
+                ESP_LOGI(TAG, "MCP sleep.rest");
+                return true;
+            });
+
+        mcp.AddTool("self.sleep.wake_up",
+            "Wake her back up from self.sleep.rest: opens her eyes, resumes camera tracking. "
+            "Usually not needed (starting a new conversation already wakes her automatically) "
+            "— use this only if the user explicitly asks her to wake up without otherwise talking.",
+            PropertyList(),
+            [this](const PropertyList&) -> ReturnValue {
+                face_tracker_.SetManualLock(false);
+                face_tracker_.Resume();
+                if (auto* disp = static_cast<M5StackAvatarDisplay*>(GetDisplay())) disp->SetSleeping(false);
+                ESP_LOGI(TAG, "MCP sleep.wake_up");
+                return true;
             });
     }
 
@@ -2469,6 +2553,9 @@ public:
             face_tracker_.SetSearchingCallback([avatar_display](bool s) {
                 avatar_display->SetSearching(s);
             });
+            // 追踪默认全天常驻开启("一直醒着"),不再等第一次对话才启动;
+            // 只有明确"睡眠"(self.sleep.rest)才会暂停。
+            face_tracker_.Resume();
         }
         avatar_display->SetLedUpdater([this](const char* emotion) {
             UpdateLedsFromEmotion(emotion);
@@ -2523,6 +2610,7 @@ public:
         // 闹钟:不依赖舵机/电量，独立于上面两个 timer。
         alarm_mgr_.Load();
         RegisterAlarmMcpTools();
+        RegisterSleepMcpTools();
 
         esp_timer_create_args_t alarm_args = {};
         alarm_args.callback = [](void* arg) {
