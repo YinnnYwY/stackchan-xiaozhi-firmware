@@ -704,9 +704,10 @@ public:
     // 只借用 Draw() 那一帧的表情显示,不改 expression_ 本身——LLM 的正常表情不会被打乱。
     void SetSearching(bool s) { searching_ = s; }
 
-    // 明确进入/退出"睡眠"(self.sleep.* 工具触发,不再随 Idle 自动睡):
-    // 闭眼 + zzz,同样只借用显示,不动 expression_ 本身。
-    void SetSleeping(bool s) { sleeping_ = s; }
+    // 明确进入/退出"睡眠"(self.sleep.* 工具触发,不再随 Idle 自动睡)。
+    // activity: 0=睡觉(闭眼+zzz) 1=看书 2=写代码 3=看论文——只借用显示,
+    // 不动 expression_/overlay_ 本身。
+    void SetSleeping(bool s, int activity = 0) { sleeping_ = s; sleep_activity_ = activity; }
 
     // 正在跟踪真实动静时(true)/停止时(false):睁大眼睛表示"注意到你了",
     // 让"她在动"这件事总有个看得出来的理由,不是无缘无故动。
@@ -833,13 +834,24 @@ private:
         if (mouth_open_ > 0.05f) bob -= (int)(mouth_open_ * 3.0f);   // 说话时轻轻上跳(无嘴,靠身体动)
 
         // 睡眠/找不到人/正在跟踪时,这一帧临时借用对应表情,只改这一帧的显示,
-        // 不动 expression_/overlay_ 本身——状态结束就自动恢复 LLM 设的正常表情。
-        // 优先级:睡眠 > 着急找人 > 注意到你(三者互斥,追踪在睡眠/搜索时不会同时发生)。
+        // 不动 expression_/overlay_/gaze_ 本身——状态结束就自动恢复 LLM 设的正常
+        // 表情。优先级:睡眠 > 着急找人 > 注意到你(三者互斥,追踪在睡眠/搜索时
+        // 不会同时发生)。睡眠里 activity!=0("忙自己的")不闭眼,睁眼往下看+图标。
         Expression saved_expr = expression_;
         Overlay saved_overlay = overlay_;
+        float saved_gaze_h = gaze_h_, saved_gaze_v = gaze_v_;
+        bool draw_book = false, draw_code = false, draw_papers = false;
         if (sleeping_) {
-            expression_ = Expression::Sleepy;
-            overlay_.zzz = true;
+            if (sleep_activity_ == 0) {
+                expression_ = Expression::Sleepy;
+                overlay_.zzz = true;
+            } else {
+                expression_ = Expression::Neutral;   // 睁眼,不用默认呆呆直视
+                gaze_h_ = 0.0f; gaze_v_ = 0.8f;       // 往下看,像在看手里的东西
+                draw_book = (sleep_activity_ == 1);
+                draw_code = (sleep_activity_ == 2);
+                draw_papers = (sleep_activity_ == 3);
+            }
         } else if (searching_) {
             expression_ = Expression::Confused;
             overlay_.question_mark = true;
@@ -850,9 +862,13 @@ private:
         DrawBody(&layer, bob);
         DrawFace(&layer, bob);
         DrawExtras(&layer, bob);
+        if (draw_book) DrawBookIcon(&layer, 238, 60 + bob);
+        if (draw_code) DrawCodeIcon(&layer, 236, 58 + bob);
+        if (draw_papers) DrawPapersIcon(&layer, 238, 58 + bob);
 
         expression_ = saved_expr;
         overlay_ = saved_overlay;
+        gaze_h_ = saved_gaze_h; gaze_v_ = saved_gaze_v;
 
         lv_canvas_finish_layer(canvas_, &layer);
     }
@@ -1032,6 +1048,43 @@ private:
         EyeSquare(layer, RX + gx, ey, 14, EYE);
     }
 
+    // ── 睡眠待机的"忙自己的"小图标(看书/写代码/看论文),角落小图标示意——
+    // 像素方块风,和其它装饰(闪光/zzz)同一路子。
+    void DrawBookIcon(lv_layer_t* layer, int x, int y) {
+        const lv_color_t PAPER = lv_color_make(0xF0, 0xEC, 0xE0);
+        const lv_color_t SPINE = lv_color_make(0xB0, 0x70, 0x45);
+        const lv_color_t LINEC = lv_color_make(0x8A, 0x8A, 0x8A);
+        FillRect(layer, x, y, 15, 20, PAPER);
+        FillRect(layer, x + 15, y, 15, 20, PAPER);
+        FillRect(layer, x + 14, y, 2, 20, SPINE);
+        for (int i = 0; i < 3; i++) {
+            FillRect(layer, x + 3, y + 4 + i * 5, 9, 1, LINEC);
+            FillRect(layer, x + 18, y + 4 + i * 5, 9, 1, LINEC);
+        }
+    }
+    void DrawCodeIcon(lv_layer_t* layer, int x, int y) {
+        const lv_color_t SCREEN = lv_color_make(0x20, 0x20, 0x28);
+        const lv_color_t CODEC  = lv_color_make(0x6F, 0xE0, 0x9A);
+        const lv_color_t BASE   = lv_color_make(0x50, 0x50, 0x58);
+        FillRect(layer, x, y, 34, 22, SCREEN);
+        FillRect(layer, x + 3, y + 4, 14, 3, CODEC);
+        FillRect(layer, x + 3, y + 10, 20, 3, CODEC);
+        FillRect(layer, x + 3, y + 16, 10, 3, CODEC);
+        FillRect(layer, x, y + 22, 34, 3, BASE);
+    }
+    void DrawPapersIcon(lv_layer_t* layer, int x, int y) {
+        const lv_color_t P1 = lv_color_make(0xD8, 0xD4, 0xC8);
+        const lv_color_t P2 = lv_color_make(0xE4, 0xE0, 0xD4);
+        const lv_color_t P3 = lv_color_make(0xF0, 0xEC, 0xE0);
+        const lv_color_t LINEC = lv_color_make(0x8A, 0x8A, 0x8A);
+        FillRect(layer, x + 4, y + 6, 22, 16, P1);
+        FillRect(layer, x + 2, y + 3, 22, 16, P2);
+        FillRect(layer, x, y, 22, 16, P3);
+        for (int i = 0; i < 3; i++) {
+            FillRect(layer, x + 3, y + 3 + i * 4, 14, 1, LINEC);
+        }
+    }
+
     // ── 附加装饰:腮红/眼泪/墨镜/飘心/闪光/zzz/问号 等(无嘴,全走眼与装饰)──
     void DrawExtras(lv_layer_t* layer, int bob) {
         const lv_color_t WHITE = lv_color_make(0xFF, 0xFF, 0xFF);
@@ -1127,6 +1180,7 @@ private:
     uint32_t gaze_ext_ms_ = 0;   // 上次外部(摄像头追踪)设视线的时间,期间暂停随机扫视
     bool searching_ = false;    // 找不到人,正在"着急找"(临时借用表情,见 Draw())
     bool sleeping_ = false;     // 明确进入睡眠(self.sleep.rest,临时借用表情,见 Draw())
+    int sleep_activity_ = 0;    // 0=睡觉 1=看书 2=写代码 3=看论文(见 Draw())
     bool attentive_ = false;    // 正在跟踪真实动静(临时借用表情,见 Draw())
 
     float breath_amp_ = 3.0f;
@@ -1218,9 +1272,9 @@ public:
         if (avatar_.IsReady()) avatar_.SetSearching(s);
     }
     // 明确进入(true)/退出(false)睡眠——self.sleep.* 工具或新一轮对话开始时调用
-    void SetSleeping(bool s) {
+    void SetSleeping(bool s, int activity = 0) {
         DisplayLockGuard lock(this);
-        if (avatar_.IsReady()) avatar_.SetSleeping(s);
+        if (avatar_.IsReady()) avatar_.SetSleeping(s, activity);
     }
     // 正在跟踪真实动静(true)/停止(false)——让"她在动"总有个看得出来的表情理由
     void SetAttentive(bool a) {
@@ -1511,6 +1565,23 @@ private:
     TouchPoint_t tp_;
 };
 
+// ── 定时活动分类:把云端视觉模型的回答(可能带各种废话/标点)防御性
+// 匹配到几个固定短标签上,保证发给 SendUserText 的内容长度可控、稳定可解析。
+// "工作听歌"类要排在"工作"前面,同时出现"工作"+"音乐/听歌"时优先合并判定。
+static std::string ClassifyActivityLabel(const std::string& raw) {
+    struct { const char* needle; const char* label; } table[] = {
+        {"开会", "开会"}, {"会议", "开会"},
+        {"游戏", "游戏"}, {"打游戏", "游戏"},
+        {"视频", "视频"}, {"看剧", "视频"}, {"电影", "视频"},
+        {"听歌", "工作听歌"}, {"音乐", "工作听歌"}, {"耳机", "工作听歌"},
+        {"工作", "工作"}, {"打字", "工作"}, {"电脑", "工作"}, {"办公", "工作"},
+    };
+    for (auto& t : table) {
+        if (raw.find(t.needle) != std::string::npos) return t.label;
+    }
+    return "其他";
+}
+
 class M5StackCoreS3Board : public WifiBoard {
 private:
     i2c_master_bus_handle_t i2c_bus_;
@@ -1543,6 +1614,7 @@ private:
     bool low_batt_warned_ = false;
     AlarmManager alarm_mgr_;
     esp_timer_handle_t alarm_timer_ = nullptr;
+    esp_timer_handle_t activity_timer_ = nullptr;
 
     void InitializeBmi270() {
         // BMI270 实际在 0x69（不是 SDK 默认的 0x68），自己用 IDF i2c API + 底层 bmi270_init 绕过硬编码
@@ -2100,8 +2172,10 @@ private:
             PropertyList(),
             [this](const PropertyList&) -> ReturnValue {
                 face_tracker_.Pause();
-                if (auto* disp = static_cast<M5StackAvatarDisplay*>(GetDisplay())) disp->SetSleeping(true);
-                ESP_LOGI(TAG, "MCP sleep.rest");
+                // 随机挑一个"忙自己的"待机形象:睡觉/看书/写代码/看论文,不总是一个样。
+                int activity = (int)(esp_random() % 4);
+                if (auto* disp = static_cast<M5StackAvatarDisplay*>(GetDisplay())) disp->SetSleeping(true, activity);
+                ESP_LOGI(TAG, "MCP sleep.rest activity=%d", activity);
                 return true;
             });
 
@@ -2117,6 +2191,33 @@ private:
                 ESP_LOGI(TAG, "MCP sleep.wake_up");
                 return true;
             });
+    }
+
+    // 定时活动记录:拍一张照片问云端"在做什么",匹配成固定短标签后通过
+    // SendUserText 那条 canned-message 通道转给云端(24 字节上限,所以只能
+    // 传一个短标签,不是完整描述)。云端那边(小小克的角色 prompt)要负责把
+    // "活动:X" 这种消息安静地记进 Obsidian,不要语音回应。
+    // 阻塞操作(拍照编码+网络请求),不能直接在 esp_timer 回调里跑,单开一个
+    // 任务做,做完自行退出。
+    void ClassifyAndLogActivity() {
+        if (!camera_ || !camera_->IsOk()) return;
+        if (face_tracker_.IsPaused()) return;  // 明确睡眠中,尊重"别管她"
+        try {
+            if (!camera_->Capture()) return;
+            std::string question =
+                "用一个词简单回答：这个人现在在做什么？只能从以下几个词里选一个"
+                "回答，不要解释：游戏、工作、视频、工作听歌、开会、其他。";
+            std::string raw = camera_->Explain(question);
+            std::string label = ClassifyActivityLabel(raw);
+            std::string phrase = AlarmManager::Utf8Truncate(std::string("活动:") + label, 24);
+            ESP_LOGI(TAG, "Activity check: raw=%s -> %s", raw.c_str(), phrase.c_str());
+            auto& app = Application::GetInstance();
+            app.Schedule([&app, phrase]() {
+                app.SendUserText(phrase);
+            });
+        } catch (const std::exception& e) {
+            ESP_LOGW(TAG, "Activity classify failed: %s", e.what());
+        }
     }
 
     void InitializePowerSaveTimer() {
@@ -2668,6 +2769,25 @@ public:
         alarm_args.skip_unhandled_events = true;
         esp_timer_create(&alarm_args, &alarm_timer_);
         esp_timer_start_periodic(alarm_timer_, 20000000);  // 每 20s 比对一次本机时间
+
+        // 定时活动记录:每 10 分钟拍照问一次云端"在做什么"。回调只负责派生一个
+        // 任务(拍照+网络请求会阻塞,不能直接占 esp_timer 的派发队列),任务
+        // 做完自行退出。频率可调:main/boards/m5stack-core-s3/m5stack_core_s3.cc
+        // 搜 "activity_check" 改周期。
+        esp_timer_create_args_t activity_args = {};
+        activity_args.callback = [](void* arg) {
+            auto* self = static_cast<M5StackCoreS3Board*>(arg);
+            xTaskCreate([](void* a) {
+                static_cast<M5StackCoreS3Board*>(a)->ClassifyAndLogActivity();
+                vTaskDelete(nullptr);
+            }, "activity_check", 8192, self, 1, nullptr);
+        };
+        activity_args.arg = this;
+        activity_args.name = "activity_timer";
+        activity_args.dispatch_method = ESP_TIMER_TASK;
+        activity_args.skip_unhandled_events = true;
+        esp_timer_create(&activity_args, &activity_timer_);
+        esp_timer_start_periodic(activity_timer_, 10ULL * 60 * 1000000);  // 每 10 分钟
 
         GetBacklight()->RestoreBrightness();
     }
