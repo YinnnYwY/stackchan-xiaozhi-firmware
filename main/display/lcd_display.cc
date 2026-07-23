@@ -903,11 +903,12 @@ void LcdDisplay::SetupUI() {
     lv_obj_set_width(status_bar_, LV_HOR_RES * 0.7);
     lv_obj_set_height(status_bar_, LV_SIZE_CONTENT);
     lv_obj_set_style_radius(status_bar_, lvgl_theme->spacing(4), 0);      // 圆角气泡
-    lv_obj_set_style_bg_opa(status_bar_, LV_OPA_20, 0);                  // 淡淡的底,像云朵
-    lv_obj_set_style_bg_color(status_bar_, lv_color_white(), 0);
+    // 之前用 LV_OPA_20 白底做"云朵"质感,实机拍出来跟实心白块差不多——
+    // 改成完全透明,只留一圈边框线,和底部说话气泡的做法一致。
+    lv_obj_set_style_bg_opa(status_bar_, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(status_bar_, 1, 0);
     lv_obj_set_style_border_color(status_bar_, lv_color_white(), 0);
-    lv_obj_set_style_border_opa(status_bar_, LV_OPA_50, 0);
+    lv_obj_set_style_border_opa(status_bar_, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(status_bar_, 0, 0);
     lv_obj_set_style_pad_top(status_bar_, lvgl_theme->spacing(2), 0);
     lv_obj_set_style_pad_bottom(status_bar_, lvgl_theme->spacing(2), 0);
