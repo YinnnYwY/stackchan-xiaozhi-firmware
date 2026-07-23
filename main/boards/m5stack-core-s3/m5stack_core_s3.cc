@@ -1358,7 +1358,6 @@ public:
         if (!status || !avatar_.IsReady()) return;
         DisplayLockGuard lock(this);
         auto state = Application::GetInstance().GetDeviceState();
-        // 追踪常驻开启(不再随 Idle 自动暂停)——只有明确"睡眠"才停,见 self.sleep.*。
         // 开始新一轮对话 = 确定"醒着":顺带解除手动锁(避免用户曾用 head.move
         // 转头后忘了 head.center 导致追踪永久失效)、清掉睡眠视觉、恢复追踪。
         if (state == kDeviceStateListening || state == kDeviceStateSpeaking) {
@@ -1367,6 +1366,18 @@ public:
                 face_tracker_->Resume();
             }
             SetSleeping(false);
+        } else if (state == kDeviceStateIdle) {
+            // 待机(不在对话中) = 自动进入"自己待着"的状态:舵机/追踪完全停止,
+            // 随机挑一种待机形象(睡觉/看书/写代码/看论文)——不需要主人明确说
+            // "睡觉了",待机本身就意味着她开始自己一个人待着。
+            // 只在"刚进入待机"这一刻触发一次:待机时每 10s 的时钟刷新也会调
+            // SetStatus,用 IsPaused() 判断"已经在待机"就跳过,避免每 10s
+            // 重新随机换一次形象、看起来一直在闪烁切换。
+            if (face_tracker_ && !face_tracker_->IsPaused()) {
+                face_tracker_->Pause();
+                int activity = (int)(esp_random() % 4);
+                SetSleeping(true, activity);
+            }
         }
         bool is_active = (strstr(status, "聆听")
                        || strstr(status, "说话")
