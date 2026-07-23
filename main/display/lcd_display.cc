@@ -897,18 +897,18 @@ void LcdDisplay::SetupUI() {
     lv_obj_set_style_text_color(battery_label_, lv_color_white(), 0);
     lv_obj_set_style_margin_left(battery_label_, lvgl_theme->spacing(2), 0);
 
-    /* Layer 2: Status bar - "思考中"等状态,做成云朵气泡的样子(圆角+细边框),
-       和 top_bar_ 图标行分开,给下面新的"你说的话"区域让出空间 */
+    /* Layer 2: Status bar - "待命"等系统状态。这类内容不是她"说的话",
+       和 self.mind.think 的内心 OS 是同一类"安静的背景信息"——统一用淡边框
+       (LV_OPA_30,和 SetChatMessage 里 role=="thought" 的处理一致),
+       和真正说出来的话(实线满边框)明确区分开。透明底,不留白块。 */
     status_bar_ = lv_obj_create(screen);
     lv_obj_set_width(status_bar_, LV_HOR_RES * 0.7);
     lv_obj_set_height(status_bar_, LV_SIZE_CONTENT);
     lv_obj_set_style_radius(status_bar_, lvgl_theme->spacing(4), 0);      // 圆角气泡
-    // 之前用 LV_OPA_20 白底做"云朵"质感,实机拍出来跟实心白块差不多——
-    // 改成完全透明,只留一圈边框线,和底部说话气泡的做法一致。
     lv_obj_set_style_bg_opa(status_bar_, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(status_bar_, 1, 0);
     lv_obj_set_style_border_color(status_bar_, lv_color_white(), 0);
-    lv_obj_set_style_border_opa(status_bar_, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_opa(status_bar_, LV_OPA_30, 0);
     lv_obj_set_style_pad_all(status_bar_, 0, 0);
     lv_obj_set_style_pad_top(status_bar_, lvgl_theme->spacing(2), 0);
     lv_obj_set_style_pad_bottom(status_bar_, lvgl_theme->spacing(2), 0);
@@ -936,18 +936,24 @@ void LcdDisplay::SetupUI() {
     lv_label_set_text(status_label_, Lang::Strings::INITIALIZING);
     lv_obj_align(status_label_, LV_ALIGN_CENTER, 0, 0);
 
-    /* 新增:主人说的话(语音转文字结果)——放在气泡下面,方便发现"她听错了什么" */
+    /* 主人说的话(语音转文字结果)——加一个和其它气泡一致的透明底+边框,
+       不再是裸文字浮在头顶;紧跟图标行,不留大片空白("顶到顶部")。 */
     user_text_label_ = lv_label_create(screen);
     lv_obj_set_width(user_text_label_, LV_HOR_RES - lvgl_theme->spacing(16));
-    lv_obj_set_height(user_text_label_, text_font->line_height);
+    lv_obj_set_height(user_text_label_, text_font->line_height + lvgl_theme->spacing(4));
     lv_label_set_long_mode(user_text_label_, LV_LABEL_LONG_DOT);          // 一行,超出显示省略号
     lv_obj_set_style_text_align(user_text_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_color(user_text_label_, lv_color_white(), 0);
-    lv_obj_set_style_text_opa(user_text_label_, LV_OPA_70, 0);            // 比气泡状态字稍淡,区分主次
+    lv_obj_set_style_text_opa(user_text_label_, LV_OPA_90, 0);            // 主人说的是"真实内容",不用淡化
+    lv_obj_set_style_bg_opa(user_text_label_, LV_OPA_TRANSP, 0);          // 透明底
+    lv_obj_set_style_radius(user_text_label_, lvgl_theme->spacing(4), 0);
+    lv_obj_set_style_border_width(user_text_label_, 1, 0);
+    lv_obj_set_style_border_color(user_text_label_, lv_color_white(), 0);
+    lv_obj_set_style_border_opa(user_text_label_, LV_OPA_COVER, 0);       // 实线框:这是真实听到的话
+    lv_obj_set_style_pad_ver(user_text_label_, lvgl_theme->spacing(2), 0);
     lv_label_set_text(user_text_label_, "");
-    // "聆听中/思考中"等日常状态气泡平时是隐藏的(见 M5StackAvatarDisplay::SetStatus),
-    // 头顶通常只有这一行,所以直接紧跟图标行,不用给气泡预留位置。
-    lv_obj_align(user_text_label_, LV_ALIGN_TOP_MID, 0, 24);
+    // 紧跟图标行,尽量顶到顶部,不留大片空白(之前 24px 间距太大,反馈"没顶到顶")。
+    lv_obj_align(user_text_label_, LV_ALIGN_TOP_MID, 0, 18);
     lv_obj_add_flag(user_text_label_, LV_OBJ_FLAG_HIDDEN);  // 没内容时不显示
 
 #if CONFIG_USE_MULTILINE_CHAT_MESSAGE
